@@ -1,0 +1,17 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "paths": {
+      "@/*": ["./src/*"],
+      // Laufzeit laedt die Icons einzeln ueber den Unterpfad (kleines Bundle);
+      // TypeScript nimmt dafuer die mitgelieferten Deklarationen, damit nicht
+      // der Quellcode des Pakets mitgeprueft wird.
+      "phosphor-react-native/src/icons/*": [
+        "./node_modules/phosphor-react-native/lib/typescript/icons/*"
+      ]
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"],
+  "exclude": ["node_modules"]
+}

@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "Kompendium",
+    "slug": "kompendium",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "kompendium",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0E1012",
+    "android": {
+      "package": "de.boege.kompendium",
+      "edgeToEdgeEnabled": true
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "de.boege.kompendium"
+    },
+    "plugins": ["expo-router"],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
