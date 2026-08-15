@@ -55,6 +55,7 @@ scripts/lint-tokens   Prueft: keine freihaendigen Farb- oder Schriftwerte
 scripts/shots.mjs     Screenshots des Viewer-Kernflows
 scripts/shots6.mjs    Screenshots der Screens aus Schritt 6
 scripts/shots7.mjs    Screenshots der Screens aus Schritt 7, inkl. Import
+scripts/shots8.mjs    Screenshots der Zustaende aus Schritt 8
 supabase/schema.sql   Datenbankschema fuer den spaeteren Sync
 ```
 
@@ -75,7 +76,18 @@ cd dist && python3 -m http.server 8099    # die Seite unter / laden, nicht /inde
 node scripts/shots.mjs http://127.0.0.1:8099 /tmp/shots
 node scripts/shots6.mjs http://127.0.0.1:8099 /tmp/shots6
 node scripts/shots7.mjs http://127.0.0.1:8099 /tmp/shots7
+node scripts/shots8.mjs http://127.0.0.1:8099 /tmp/shots8
 ```
+
+`shots8.mjs` schaltet den Browser-Kontext wirklich offline (`setOffline`) und
+loest die Zustaende damit aus, statt sie nachzustellen. Zwei davon gibt es im
+Browser nur mit Nachhilfe, deshalb kennt `repository.web.ts` zwei
+Adressparameter — **nur dort, nie in der App**:
+
+| Parameter | Wirkung |
+|---|---|
+| `?bestand=leer` | startet ohne Dokumente — Blatt `4a` |
+| `?laden=1200` | verzoegert das erste Lesen um 1200 ms — Blatt `4b` |
 
 Der Viewer nutzt auf Web nicht `react-native-webview` — das Paket hat dort
 keine Umsetzung — sondern ueber `DocumentView.web.tsx` ein `iframe`. Das
@@ -175,7 +187,28 @@ Text darauf nicht lesbar.
 - [x] Schritt 7 — Einstellungen mit Papierkorb und Darstellung; dazu die
       Datenschicht: expo-sqlite als Wahrheitsquelle, lokaler Dateicache und die
       drei wirksamen Import-Wege
-- [ ] Schritt 8 — Zustaende: leer, laden, offline, Sync-Fehler, kein Cache
+- [x] Schritt 8 — Zustaende: leer, laden, offline, Sync-Fehler, kein Cache;
+      dazu der Netzzustand ueber NetInfo und `last_opened_at` in der Datenbank
+
+### Die fuenf Zustaende (Schritt 8)
+
+| Blatt | Zustand | Woran er haengt |
+|---|---|---|
+| `4a` | leere Bibliothek | Datenbank gelesen und kein Dokument darin |
+| `4b` | Ladezustand | `hydrated` im Dokument-Zustand ist noch `false` |
+| `4c` | Offline | `isOnline` aus NetInfo (`state/network.ts`) |
+| `4c` | Sync-Fehler | `status === 'error'` — ein Abgleich ohne Netz |
+| `4d` | kein Cache | `!cached && !isOnline` (`isUnavailable` in `data/library.ts`) |
+
+Der 36-px-Hinweisstreifen (`ui/NoticeStrip.tsx`) **ersetzt** den
+2-px-Sync-Indikator, statt sich darunter zu stapeln; welcher von beiden
+gilt, entscheidet `useNotice()` in `state/notice.ts` — Offline geht dabei vor
+Sync-Fehler, weil "Wiederholen" ohne Netz sicher wieder fehlschlaegt.
+
+Die Wurzel wartet nicht mehr auf die Datenbank, sondern nur noch auf die
+Schrift: die Bibliothek zeigt ihre Skelett-Zeilen und tauscht sie gegen die
+echten. Kopfzeile, Suchfeld und Tab-Bar stehen dabei an derselben Stelle wie
+in der fertigen Liste, damit beim Eintreffen der Daten nichts springt.
 
 ### Abweichungen aus Schritt 7
 
@@ -203,6 +236,37 @@ Text darauf nicht lesbar.
 - Die Zeile **"Abnahmeblätter"** in den Einstellungen ist ergaenzt, damit die
   Blaetter aus `src/dev` erreichbar bleiben. In einer ausgelieferten Fassung
   faellt sie weg.
+
+### Abweichungen aus Schritt 8
+
+- **Netzzustand** wertet nur `isConnected`, nicht `isInternetReachable`:
+  Letzteres kostet einen Testabruf gegen eine fremde Adresse, der aus eigenen
+  Gruenden scheitern kann — dann stuende "Offline" ueber einer Bibliothek, die
+  vollstaendig lokal liegt. Der Fall "verbunden, aber nichts zu erreichen"
+  zeigt sich stattdessen am scheiternden Abgleich, also am `error`-Streifen.
+- **`networkSource.web.ts`** horcht auf `online`/`offline` des Fensters statt
+  auf NetInfo: dessen Web-Fassung nutzt, sobald der Browser eine
+  `navigator.connection` anbietet, allein deren `change`-Ereignis — das kommt
+  beim Abschalten einmal und danach nie wieder. Dritte Datei dieser Art nach
+  `DocumentView.web.tsx` und `repository.web.ts`.
+- **Sync-Fehler** entsteht nur beim Abgleich ohne Netz. Einen anderen Weg
+  dorthin gaebe es erst mit dem echten Supabase-Abgleich; einen Fehler
+  vorzufuehren, den es nicht gibt, waere dasselbe wie den Abgleich
+  vorzutaeuschen.
+- **Sync-Zustand auf der leeren Bibliothek** ist `idle`, nicht `pending`: ohne
+  ein einziges Dokument kann nichts offen sein, und die gelbe Leiste stuende
+  ausgerechnet auf dem Erststart-Screen (Ergaenzung zur Abweichung aus
+  Schritt 7).
+- **Leere Bibliothek ohne Kopf-Schaltflaechen:** Ansicht umschalten und
+  Sortieren entfallen, es gibt nichts anzuordnen. Blatt `4a` zeigt dort nur
+  den Titel.
+- **Neue Spalte `last_opened_at`** (Schema-Version 2, mit Migration fuer
+  vorhandene Datenbanken). Blatt `4d` nennt "Zuletzt geöffnet vor 6 Tagen";
+  `updated_at` waere dafuer die falsche Angabe, denn Lesen aendert nichts.
+  Vorhandene Zeilen bekommen `NULL` — wann sie zuletzt offen waren, weiss
+  niemand mehr, und ein erfundenes Datum waere schlechter als keins.
+- **"Erneut versuchen"** meldet ohne Netz "Keine Verbindung" als Toast, statt
+  eine Ladeanzeige zu zeigen, hinter der nichts passiert.
 
 ### Noch offen
 
