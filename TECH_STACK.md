@@ -14,10 +14,49 @@ Android-first, mobile only.
 | Zielplattform | Android (`de.boege.kompendium`), Portrait only, Dark Mode only |
 | Ausführung | Expo Go SDK 57 auf dem Zielgerät — kein Dev Build, keine nativen Custom-Module |
 
-**Warum SDK 57 statt der im Lösungskonzept gepinnten SDK 54:** Auf dem
-Zielgerät ist Expo Go für SDK 57 installiert, deshalb gilt hier abweichend
-vom Handoff-Dokument (`C:\Projekte\HTML-Dokumenten-Ordner\README.md`) 57.
-Bei Widersprüchen zwischen beiden Dokumenten gilt das Handoff-Dokument.
+**Warum SDK 57 statt der im Lösungskonzept ursprünglich gepinnten SDK 54:**
+Auf dem Zielgerät ist Expo Go für SDK 57 installiert, deshalb gilt hier
+abweichend vom ursprünglichen Lösungskonzept 57.
+
+## Architektur — drei Ebenen
+
+```
+┌─────────────────────────────────────────────────────┐
+│  PC — HTML-Dokumenten-Ordner                         │
+│  Node-Watcher: neue .html erkennen → hochladen       │
+│  (noch nicht umgesetzt, siehe "Noch offen")          │
+└──────────────────────┬──────────────────────────────┘
+                       │ upload + insert
+                       ▼
+┌─────────────────────────────────────────────────────┐
+│  SUPABASE (Single Source of Truth, Sync-Ziel)        │
+│  ├─ Storage Bucket "documents"  → die HTML-Dateien   │
+│  └─ Postgres                    → die Ordnung        │
+└──────────────────────┬──────────────────────────────┘
+                       │ Pull (Wasserzeichen) / Push (Outbox)
+                       ▼
+┌─────────────────────────────────────────────────────┐
+│  APP (Expo Go)                                       │
+│  ├─ SQLite      → lokale Wahrheitsquelle, speist UI  │
+│  ├─ FileSystem  → Datei-Cache                        │
+│  └─ WebView     → Viewer                             │
+└─────────────────────────────────────────────────────┘
+```
+
+Leitprinzip **Ablage ≠ Ordnung**: Die HTML-Dateien selbst liegen flach im
+Storage-Bucket (Dateiname `<uuid>.html`, keine Struktur). Ordner, Tags,
+Favoriten, Titel und Notizen stehen ausschließlich in den Postgres-Tabellen
+bzw. ihrem lokalen SQLite-Spiegel. Ein Dokument in einen Ordner zu
+verschieben bewegt deshalb nie eine Datei, sondern ändert nur eine
+Datenbankzeile — sortieren am Handy erfordert keinen Umbau am PC und
+umgekehrt. Tabellenschema, Setup-Anleitung und Sync-Strategie im Detail:
+[DATABASE_STRUCTURE.md](DATABASE_STRUCTURE.md).
+
+**Prinzip in der App:** Die UI liest **immer** aus SQLite, nie direkt aus
+Supabase — Screens kennen weder SQLite noch Supabase, sie lesen aus den
+Zustand-Stores; die Stores lesen beim Start einmal `loadSnapshot()` aus dem
+Repository und schreiben Änderungen feldweise zurück. Damit ist die App
+offline vollständig benutzbar und startet sofort.
 
 ## State & Daten
 
@@ -30,10 +69,6 @@ Bei Widersprüchen zwischen beiden Dokumenten gilt das Handoff-Dokument.
 | Backend (Sync-Ziel, noch nicht verdrahtet) | `@supabase/supabase-js` (`src/data/supabase.ts`) — Postgres + Storage-Bucket `documents`, Schema in `supabase/schema.sql` |
 | Netzstatus | `@react-native-community/netinfo` (`state/network.ts`), Web-Variante über `window.online`/`offline` (`networkSource.web.ts`) |
 | Persistenz von Auth/Session | `@react-native-async-storage/async-storage` |
-
-**Prinzip:** Screens kennen weder SQLite noch Supabase. Sie lesen aus den
-Zustand-Stores; die Stores lesen beim Start einmal `loadSnapshot()` aus dem
-Repository und schreiben Änderungen feldweise zurück.
 
 ## UI & Darstellung
 
@@ -51,23 +86,18 @@ Design-Tokens liegen ausschließlich unter `src/theme/` (`colors.ts`,
 `typography.ts`, `layout.ts`, `motion.ts`, `tile.ts`) — Details siehe
 [DESIGN.md](DESIGN.md).
 
-## Backend (Supabase) — Zielbild
+## Was in Expo Go nicht geht
 
-Noch nicht produktiv verdrahtet (`state/sync.ts` führt den Zustandsverlauf
-bisher nur vor), aber Schema und Client stehen:
+| Fehlt | Auswirkung | Umgehung |
+|---|---|---|
+| Share-Sheet als Ziel ("Teilen an Kompendium" aus Chrome) | Kein 1-Tap-Import vom Handy | Import über Datei-Picker / Zwischenablage / URL. Später Dev Build. |
+| Dateizuordnung `.html` öffnen mit … | Dasselbe | dito |
+| Hintergrund-Sync (`expo-background-task`) | Sync nur bei App-Start / Vordergrund / Pull-to-Refresh | In der Praxis ausreichend |
+| Eigenes App-Icon & Splash | Kosmetisch | Ab Dev Build |
 
-- **Storage:** privater Bucket `documents`, flach, Dateiname `<uuid>.html`.
-  Ablage ≠ Ordnung: eine Datei bewegen heißt nie eine Zeile ändern.
-- **Postgres:** `folders`, `documents`, `tags`, `document_tags`, je mit
-  RLS-Policy `owner_id = auth.uid()` — der Publishable Key ist damit
-  gefahrlos in der App. Volltextsuche serverseitig über `tsvector`
-  (Deutsch), `updated_at`-Trigger für das Sync-Wasserzeichen.
-- **Auth:** anonymes Sign-in (`supabase.auth.signInAnonymously()`), kein
-  Login-Screen.
-- **Sync-Strategie:** Pull über Wasserzeichen (`updated_at`), Push über eine
-  Outbox-Warteschlange, Konflikte Last-Write-Wins auf Zeilenebene. Details im
-  Lösungskonzept, Abschnitt 5.
-- Ohne `.env` startet die App trotzdem und läuft rein lokal.
+Keiner dieser Punkte blockiert den Betrieb. Der Share-Sheet-Empfang ist die
+einzige Funktion, für die sich ein Dev Build wirklich lohnt — ein
+`npx expo run:android` weit weg, kein Umbau.
 
 ## Entwicklung & Prüfungen
 
@@ -79,7 +109,7 @@ npx expo start
 
 ```bash
 npm run typecheck     # tsc --noEmit
-npm run lint:tokens   # scripts/lint-tokens.mjs — keine freihaendigen Hex-/Schriftwerte ausserhalb src/theme
+npm run lint:tokens   # scripts/lint-tokens.mjs — keine freihändigen Hex-/Schriftwerte ausserhalb src/theme
 ```
 
 `react-native-web` liegt nur in `devDependencies`: zum Soll-Ist-Vergleich per
@@ -97,22 +127,25 @@ app/suche.tsx          Suche (Push, ohne Tab-Bar)
 app/papierkorb.tsx     Papierkorb
 app/darstellung.tsx    Darstellung
 app/offline.tsx        Offline behaltene Dokumente
-app/abnahme.tsx        Abnahmeblaetter (Entwicklung)
+app/abnahme.tsx        Abnahmeblätter (Entwicklung)
 src/theme/             Design-Tokens — einzige Stelle mit Hex-Werten
 src/ui/                Basiskomponenten, Kachel, Icon-Register
 src/screens/           Screens, je ein eigener Ordner
 src/state/             zustand-Stores
 src/data/              Typen, Formate, Suche, Import, Dateicache
 src/data/db/           Schema + Repository — einzige Stelle mit SQL
-src/dev/               Abnahmeblaetter (Tokens, Kacheln, Komponenten)
-scripts/                Token-Linter, Screenshot-Skripte
-supabase/schema.sql    Backend-Schema fuer den spaeteren Sync
+src/dev/               Abnahmeblätter (Tokens, Kacheln, Komponenten)
+scripts/               Token-Linter, Screenshot-Skripte
+supabase/schema.sql    Backend-Schema für den späteren Sync
 ```
 
 ## Referenzdokumente
 
-- [README.md](README.md) — Stand, Abweichungen vom Handoff, Prüfbefehle
-- `C:\Projekte\HTML-Dokumenten-Ordner\README.md` — verbindliches
-  Handoff-Dokument (Design-Tokens, Komponenten-Inventar, Screens)
+- [README.md](README.md) — Produktbeschreibung, Start, Stand, Abweichungen
+- [DESIGN.md](DESIGN.md) — vollständiges Designsystem (Tokens, Komponenten, Screens)
+- [DATABASE_STRUCTURE.md](DATABASE_STRUCTURE.md) — Datenmodell, Sync-Strategie, Setup
+- `C:\Projekte\HTML-Dokumenten-Ordner\README.md` — ursprüngliches, verbindliches
+  Handoff-Dokument (Original der Inhalte in DESIGN.md)
 - `C:\Projekte\HTML-Dokumenten-Ordner\Loesungskonzept-HTML-Dokumenten-App.md`
-  — ursprüngliches Architektur- und Sync-Konzept
+  — ursprüngliches Architektur- und Sync-Konzept (Original der Inhalte hier
+  und in DATABASE_STRUCTURE.md)

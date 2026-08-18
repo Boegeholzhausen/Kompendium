@@ -5,20 +5,21 @@ Anleitung für Claude Code in diesem Repository.
 ## Projekt
 
 **Kompendium** — persönliche Bibliothek für selbstgebaute HTML-Dokumente.
-Expo/React Native, Android-first, mobile only, Dark Mode only. Details:
-[TECH_STACK.md](TECH_STACK.md), [DESIGN.md](DESIGN.md), [README.md](README.md).
+Expo/React Native, Android-first, mobile only, Dark Mode only. Die App ist
+gebaut. Details: [TECH_STACK.md](TECH_STACK.md), [DESIGN.md](DESIGN.md),
+[DATABASE_STRUCTURE.md](DATABASE_STRUCTURE.md), [README.md](README.md).
 
-## Verbindliche Quellen — in dieser Reihenfolge
+## Verbindliche Quellen
 
-1. `C:\Projekte\HTML-Dokumenten-Ordner\README.md` — das Handoff-Dokument.
-   Bei jedem Widerspruch gilt **dieses** Dokument, auch gegenüber allem
-   anderen hier im Repo.
-2. `C:\Projekte\HTML-Dokumenten-Ordner\Loesungskonzept-HTML-Dokumenten-App.md`
-   — ursprüngliches Architektur-/Sync-Konzept, teils durch spätere Schritte
-   überholt (siehe README.md „Abweichungen").
-3. Dieses Repo: [README.md](README.md) dokumentiert den aktuellen Stand und
-   alle bewussten Abweichungen vom Handoff-Dokument — dort nachsehen, bevor
-   eine Abweichung als Fehler behandelt wird.
+Der vollständige Inhalt des ursprünglichen Handoff-Dokuments
+(`C:\Projekte\HTML-Dokumenten-Ordner\README.md`) steckt jetzt in
+[DESIGN.md](DESIGN.md); der Inhalt des ursprünglichen Lösungskonzepts
+(`C:\Projekte\HTML-Dokumenten-Ordner\Loesungskonzept-HTML-Dokumenten-App.md`)
+steckt in [TECH_STACK.md](TECH_STACK.md) und [DATABASE_STRUCTURE.md](DATABASE_STRUCTURE.md).
+Bei Zweifel an der Übertragung gelten weiterhin die beiden externen Dateien
+als Original — dort steht auch, wo bewusst vom ursprünglichen Konzept
+abgewichen wurde. [README.md](README.md) dokumentiert den aktuellen Stand
+und alle bewussten Abweichungen.
 
 ## Harte Regeln
 
@@ -61,7 +62,7 @@ cd dist && python3 -m http.server 8099   # Seite unter / laden, nicht /index.htm
 node scripts/shots.mjs http://127.0.0.1:8099 /tmp/shots
 ```
 
-Weitere `scripts/shotsN.mjs` je Umsetzungsschritt, siehe README.md.
+Weitere `scripts/shotsN.mjs` je Bereich, siehe README.md.
 
 ## Arbeitsweise in diesem Repo
 
@@ -74,5 +75,5 @@ Weitere `scripts/shotsN.mjs` je Umsetzungsschritt, siehe README.md.
 - Deutsch ist die Sprache im Code-Kommentar, in Commit-relevanten Dokumenten
   und in der UI — bei neuen Texten/Kommentaren dabei bleiben.
 - Keine neuen nativen Module, die einen Dev Build erzwingen würden — die App
-  läuft in Expo Go. Ausnahmen nur nach Rücksprache (siehe Handoff-Dokument,
+  läuft in Expo Go. Ausnahmen nur nach Rücksprache (siehe TECH_STACK.md,
   „Was in Expo Go nicht geht").
