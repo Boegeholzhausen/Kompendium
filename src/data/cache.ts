@@ -45,6 +45,19 @@ export async function readDocument(key: string): Promise<string | null> {
   return file.text();
 }
 
+/**
+ * Der `file://`-Pfad der abgelegten Datei, oder `null`, wenn es sie nicht gibt.
+ *
+ * Gebraucht vom Teilen im Viewer: das System-Sheet bekommt die Datei selbst,
+ * nicht ihren Inhalt — ein paar hundert Kilobyte HTML als Text durch das
+ * Sheet zu schicken waere weder lesbar noch weiterverwendbar.
+ */
+export function documentUri(key: string): string | null {
+  const file = fileFor(key);
+  if (!file.exists) return null;
+  return file.uri;
+}
+
 export async function deleteDocument(key: string): Promise<void> {
   const file = fileFor(key);
   if (file.exists) file.delete();

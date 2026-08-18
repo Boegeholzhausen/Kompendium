@@ -290,6 +290,24 @@ export async function setDocumentTags(documentId: string, tagIds: string[]): Pro
   });
 }
 
+/**
+ * Alles, was laenger als die Papierkorb-Frist im Papierkorb liegt.
+ *
+ * Der Hinweisstreifen auf Blatt `6a` verspricht "Wird nach 30 Tagen endgueltig
+ * geloescht" — den Aufraeumlauf dazu stoesst `hydrateStores()` beim Start an.
+ * Der Schluessel der Datei kommt mit, weil sie im selben Zug wegmuss (A4).
+ */
+export async function expiredTrashIds(
+  before: number
+): Promise<{ id: string; cacheKey: string | null }[]> {
+  const db = await database();
+  const rows = await db.getAllAsync<{ id: string; cache_key: string | null }>(
+    'SELECT id, cache_key FROM documents WHERE trashed_at IS NOT NULL AND trashed_at < ?',
+    [before]
+  );
+  return rows.map((row) => ({ id: row.id, cacheKey: row.cache_key }));
+}
+
 /** Endgueltig loeschen — nur aus dem Papierkorb heraus (Blatt `6a`). */
 export async function deleteDocuments(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
@@ -316,6 +334,24 @@ export async function renameFolder(from: string, to: string): Promise<void> {
   await db.withTransactionAsync(async () => {
     await db.runAsync('UPDATE folders SET name = ? WHERE name = ?', [to, from]);
     await db.runAsync('UPDATE documents SET folder_name = ? WHERE folder_name = ?', [to, from]);
+  });
+}
+
+/**
+ * Ordner loeschen — dieselbe Ueberlegung wie beim Umbenennen, deshalb ebenfalls
+ * in einer Transaktion: erst die Dokumente aus dem Ordner nehmen, dann den
+ * Ordner selbst. Ein Aussetzer dazwischen liesse Dokumente in einem Ordner
+ * zurueck, den es nicht mehr gibt.
+ *
+ * Die Dokumente werden NIE mitgeloescht — sie landen in "Nicht einsortiert".
+ * Ein Ordner ist eine Ablage, kein Behaelter, und ein versehentlich geloeschter
+ * Ordner darf keine Dokumente mitnehmen.
+ */
+export async function deleteFolder(name: string): Promise<void> {
+  const db = await database();
+  await db.withTransactionAsync(async () => {
+    await db.runAsync('UPDATE documents SET folder_name = NULL WHERE folder_name = ?', [name]);
+    await db.runAsync('DELETE FROM folders WHERE name = ?', [name]);
   });
 }
 

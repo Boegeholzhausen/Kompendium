@@ -19,10 +19,12 @@
  */
 import { create } from 'zustand';
 
+import { deleteDocument } from '../data/cache';
 import { persist } from '../data/db/persist';
 import * as repository from '../data/db/repository';
 import type { LibraryTag, StoredDocument } from '../data/library';
 import { tagColorNames, tagPalette } from '../theme/colors';
+import { useViewerStore } from './viewer';
 
 interface DocumentState {
   /** Erst nach dem Laden aus der Datenbank darf ein Screen "leer" zeigen. */
@@ -49,6 +51,8 @@ interface DocumentState {
   setFolder: (documentIds: string[], folderName: string | null) => void;
   /** Zweite Haelfte des Ordner-Umbenennens (siehe `state/folders.ts`). */
   renameFolderEverywhere: (from: string, to: string) => void;
+  /** Zweite Haelfte des Ordner-Loeschens: die Dokumente bleiben, der Ordner nicht. */
+  clearFolderEverywhere: (name: string) => void;
 
   /** In den Papierkorb legen; `at` als Parameter, damit das Ergebnis pruefbar bleibt. */
   trash: (documentIds: string[], at?: number) => void;
@@ -89,6 +93,30 @@ function tagIdFromName(name: string): string {
 }
 
 /**
+ * Endgueltiges Loeschen an EINER Stelle: Datenbankzeile und Datei im Cache.
+ *
+ * Beide Wege gehoeren zusammen — eine geloeschte Zeile ohne ihre Datei laesst
+ * das HTML fuer immer im Dokumentverzeichnis liegen, und der Speicherbalken in
+ * den Einstellungen zeigt dann weniger an, als belegt ist. Neben
+ * `deleteForever` benutzt auch der Papierkorb-Aufraeumlauf beim Start
+ * (`state/hydrate.ts`) genau diese Funktion.
+ *
+ * Die gemerkte Leseposition faellt hier mit weg: sie ueberdauert seit Paket B
+ * den Neustart, und ein Eintrag zu einem Dokument, das es nicht mehr gibt,
+ * wuerde sonst fuer immer mitgeschleppt.
+ */
+export async function purgeDocuments(
+  entries: { id: string; cacheKey: string | null }[]
+): Promise<void> {
+  if (entries.length === 0) return;
+  await repository.deleteDocuments(entries.map((entry) => entry.id));
+  useViewerStore.getState().forgetScroll(entries.map((entry) => entry.id));
+  for (const entry of entries) {
+    if (entry.cacheKey !== null) await deleteDocument(entry.cacheKey);
+  }
+}
+
+/**
  * Aendert die genannten Zeilen im Zustand und schreibt dieselbe Aenderung in
  * die Datenbank. Beide Wege stehen hier zusammen, damit keiner vergessen wird.
  */
@@ -118,14 +146,26 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
    * in Ruhe, sonst waere die Liste nach jedem Einsortieren neu gemischt.
    */
   setTitle: (documentId, title) =>
-    set((state) => ({
-      documents: patch(state.documents, [documentId], { title, updatedAt: Date.now() }),
-    })),
+    set((state) => {
+      const current = state.documents.find((document) => document.id === documentId);
+      // Gleicher Wert, kein Schreibvorgang: das Info-Sheet meldet gedrosselt
+      // UND beim Verlassen des Feldes, der letzte Ruf traegt deshalb oft nichts
+      // Neues. Wuerde er trotzdem `updatedAt` setzen, rutschte das Dokument in
+      // "Zuletzt geaendert" nach oben, ohne dass jemand etwas geaendert hat.
+      if (current === undefined || current.title === title) return state;
+      return {
+        documents: patch(state.documents, [documentId], { title, updatedAt: Date.now() }),
+      };
+    }),
 
   setNote: (documentId, note) =>
-    set((state) => ({
-      documents: patch(state.documents, [documentId], { note, updatedAt: Date.now() }),
-    })),
+    set((state) => {
+      const current = state.documents.find((document) => document.id === documentId);
+      if (current === undefined || current.note === note) return state;
+      return {
+        documents: patch(state.documents, [documentId], { note, updatedAt: Date.now() }),
+      };
+    }),
 
   setKeepOffline: (documentId, keepOffline) =>
     set((state) => ({ documents: patch(state.documents, [documentId], { keepOffline }) })),
@@ -171,6 +211,18 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       ),
     })),
 
+  /**
+   * Gegenstueck zu `renameFolderEverywhere`: die Datenbank hat die Transaktion
+   * (`repository.deleteFolder`) schon erledigt, hier bleibt nur der Zustand.
+   * Die Dokumente selbst bleiben — sie landen in "Nicht einsortiert".
+   */
+  clearFolderEverywhere: (name) =>
+    set((state) => ({
+      documents: state.documents.map((document) =>
+        document.folderName === name ? { ...document, folderName: null } : document
+      ),
+    })),
+
   trash: (documentIds, at) =>
     set((state) => ({
       documents: patch(state.documents, documentIds, { trashedAt: at ?? Date.now() }),
@@ -182,7 +234,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   deleteForever: (documentIds) =>
     set((state) => {
       const gone = new Set(documentIds);
-      persist(() => repository.deleteDocuments(documentIds));
+      // Der Schluessel muss VOR dem Entfernen aus dem Zustand feststehen —
+      // danach ist nicht mehr zu ermitteln, welche Datei dazugehoerte.
+      const entries = documentIds.map((id) => ({
+        id,
+        cacheKey: state.documents.find((document) => document.id === id)?.cacheKey ?? null,
+      }));
+      persist(() => purgeDocuments(entries));
       return { documents: state.documents.filter((document) => !gone.has(document.id)) };
     }),
 

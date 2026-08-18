@@ -9,6 +9,13 @@
  *
  * Tabellenziffern sind hier keine Kosmetik: die Zahl aendert sich bei jedem
  * Tipp, und ohne sie wackelte das Wort daneben.
+ *
+ * **Abweichung von Blatt `3h`:** links neben "Abbrechen" steht ein zweiter
+ * Textbutton, "Alle auswaehlen" beziehungsweise "Auswahl aufheben". Ohne
+ * Sammelgriff ist Aufraeumen bei ein paar hundert Dokumenten Zeile fuer Zeile
+ * Handarbeit. Er wirkt auf die **gerade sichtbare, gefilterte und sortierte
+ * Liste**, die der Screen von aussen hereingibt — ein Tipp bei aktivem
+ * Favoriten-Filter darf nichts waehlen, was niemand sieht.
  */
 import React, { useEffect, useRef } from 'react';
 import { Animated, StyleSheet, View } from 'react-native';
@@ -22,10 +29,20 @@ export interface SelectionHeaderProps {
   visible: boolean;
   count: number;
   top: number;
+  /** Ist die sichtbare Liste vollstaendig gewaehlt? (`isAllSelected`) */
+  allSelected: boolean;
+  onToggleAll: () => void;
   onCancel: () => void;
 }
 
-export function SelectionHeader({ visible, count, top, onCancel }: SelectionHeaderProps) {
+export function SelectionHeader({
+  visible,
+  count,
+  top,
+  allSelected,
+  onToggleAll,
+  onCancel,
+}: SelectionHeaderProps) {
   const reduceMotion = useReduceMotion();
   const opacity = useRef(new Animated.Value(visible ? 1 : 0)).current;
 
@@ -50,7 +67,13 @@ export function SelectionHeader({ visible, count, top, onCancel }: SelectionHead
         <Text variant="title" numeric style={styles.count}>
           {`${count} ausgewählt`}
         </Text>
-        <TextButton label="Abbrechen" onPress={onCancel} />
+        <View style={styles.buttons}>
+          <TextButton
+            label={allSelected ? 'Auswahl aufheben' : 'Alle auswählen'}
+            onPress={onToggleAll}
+          />
+          <TextButton label="Abbrechen" onPress={onCancel} />
+        </View>
       </View>
     </Animated.View>
   );
@@ -75,5 +98,10 @@ const styles = StyleSheet.create({
   },
   count: {
     flex: 1,
+  },
+  buttons: {
+    flexDirection: 'row',
+    // Mindestabstand zwischen zwei Beruehrungsflaechen (harte Regel).
+    gap: size.touchGap,
   },
 });

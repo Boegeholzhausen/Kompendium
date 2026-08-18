@@ -37,32 +37,20 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
 import { formatDocumentMeta } from '../../data/format';
-import type { LibraryTag, StoredDocument } from '../../data/library';
+import type { StoredDocument } from '../../data/library';
 import { documentTags, useDocumentStore } from '../../state/documents';
-import { useLibraryStore } from '../../state/library';
+import { isAllSelected, sortDocuments, useLibraryStore } from '../../state/library';
 import { useNotice } from '../../state/notice';
 import { useUnavailable } from '../../state/network';
 import { useSyncStore } from '../../state/sync';
 import { bg, size, space } from '../../theme';
-import { ContextMenu, type ContextMenuItem } from '../../ui/ContextMenu';
 import { DocCard } from '../../ui/DocCard';
 import { DocRow } from '../../ui/DocRow';
 import { Fab } from '../../ui/Fab';
-import {
-  Check,
-  FileHtml,
-  FolderOpen,
-  Star,
-  Tag as TagIcon,
-  Trash,
-  WarningCircle,
-  type Icon,
-} from '../../ui/icons';
+import { FileHtml, WarningCircle } from '../../ui/icons';
 import { SearchField } from '../../ui/SearchField';
 import { SectionHeader } from '../../ui/SectionHeader';
-import { Toast } from '../../ui/Toast';
-import { MoveSheet } from '../folders/MoveSheet';
-import { TagSheet } from '../viewer/TagSheet';
+import { useDocumentActions } from './documentActions';
 import { EmptyLibrary } from './EmptyLibrary';
 import { ImportSheet } from './ImportSheet';
 import { LibraryHeader } from './LibraryHeader';
@@ -74,20 +62,7 @@ import { SortSheet } from './SortSheet';
 
 const DAY = 24 * 60 * 60 * 1000;
 
-/**
- * Was zuletzt geschah — der Toast bietet dafuer 5 Sekunden "Rueckgaengig".
- *
- * Ohne `undo` traegt er nur die Meldung: ein gescheiterter Import (Blatt `3g`)
- * hat nichts, was sich zuruecknehmen liesse, und eine Schaltflaeche ohne
- * Wirkung waere schlimmer als keine.
- */
-interface Undoable {
-  message: string;
-  icon?: Icon;
-  undo?: () => void;
-}
-
-type OpenSheet = null | 'sort' | 'import' | 'move' | 'tag';
+type OpenSheet = null | 'sort' | 'import';
 
 export function LibraryScreen() {
   const insets = useSafeAreaInsets();
@@ -102,10 +77,10 @@ export function LibraryScreen() {
   const toggleViewMode = useLibraryStore((state) => state.toggleViewMode);
   const setSort = useLibraryStore((state) => state.setSort);
   const setFilter = useLibraryStore((state) => state.setFilter);
-  const startSelection = useLibraryStore((state) => state.startSelection);
   const startSelectionWith = useLibraryStore((state) => state.startSelectionWith);
   const toggleSelected = useLibraryStore((state) => state.toggleSelected);
   const endSelection = useLibraryStore((state) => state.endSelection);
+  const selectAll = useLibraryStore((state) => state.selectAll);
   const setRequest = useLibraryStore((state) => state.setRequest);
 
   /**
@@ -118,22 +93,19 @@ export function LibraryScreen() {
   const hydrated = useDocumentStore((state) => state.hydrated);
   const tags = useDocumentStore((state) => state.tags);
   const toggleFavorite = useDocumentStore((state) => state.toggleFavorite);
-  const setFavorite = useDocumentStore((state) => state.setFavorite);
-  const assignTag = useDocumentStore((state) => state.assignTag);
-  const removeTag = useDocumentStore((state) => state.removeTag);
-  const createTag = useDocumentStore((state) => state.createTag);
   const trash = useDocumentStore((state) => state.trash);
-  const restoreFromTrash = useDocumentStore((state) => state.restoreFromTrash);
-  const setFolder = useDocumentStore((state) => state.setFolder);
+
+  /**
+   * Kontextmenue, Verschieben, Taggen und der Toast — dieselben Griffe, die
+   * auch das Ordner-Detail benutzt (`documentActions`).
+   */
+  const actions = useDocumentActions();
 
   const syncStatus = useSyncStore((state) => state.status);
   /** Offline oder Sync-Fehler — der 36-px-Streifen statt der 2-px-Leiste (Blatt `4c`). */
   const notice = useNotice();
 
   const [sheet, setSheet] = useState<OpenSheet>(null);
-  const [menuFor, setMenuFor] = useState<StoredDocument | null>(null);
-  const [tagQuery, setTagQuery] = useState('');
-  const [undoable, setUndoable] = useState<Undoable | null>(null);
   /**
    * Kommt aus dem Scrolloffset und lebt nur, solange der Screen sichtbar ist.
    * Er schaltet die Chips zwischen 40 und 36 um — dazwischen gibt es nichts,
@@ -183,16 +155,19 @@ export function LibraryScreen() {
       return document.tagIds.includes(activeFilter);
     });
 
-    const sorted = [...filtered];
-    if (sort === 'title') {
-      sorted.sort((a, b) => a.title.localeCompare(b.title, 'de'));
-    } else if (sort === 'size') {
-      sorted.sort((a, b) => b.sizeBytes - a.sizeBytes);
-    } else {
-      sorted.sort((a, b) => b.updatedAt - a.updatedAt);
-    }
-    return sorted;
+    return sortDocuments(filtered, sort);
   }, [activeFilter, allDocuments, isGrid, newIds, sort]);
+
+  /**
+   * Was gerade auf dem Schirm steht: die Liste UND die Sektion "Neu" darueber.
+   * "Alle auswaehlen" haelt sich daran — in der Kachelansicht gibt es die
+   * Sektion nicht, dort stehen die neuen Dokumente schon in `documents`.
+   */
+  const visibleIds = useMemo(() => {
+    const ids = new Set(newDocuments.map((entry) => entry.id));
+    for (const document of documents) ids.add(document.id);
+    return [...ids];
+  }, [documents, newDocuments]);
 
   /** Nicht geladen UND kein Netz (Blatt `4c`) — siehe `data/library`. */
   const unavailable = useUnavailable();
@@ -215,37 +190,6 @@ export function LibraryScreen() {
 
   const openSearch = useCallback(() => router.push('/suche'), [router]);
 
-  /** Tags, die ALLE gewaehlten Dokumente tragen — nur die zeigt das Sheet gesetzt. */
-  const commonTagIds = useMemo(() => {
-    if (selectedIds.length === 0) return [];
-    const selected = allDocuments.filter((document) => selectedIds.includes(document.id));
-    if (selected.length === 0) return [];
-    return selected[0].tagIds.filter((id) =>
-      selected.every((document) => document.tagIds.includes(id))
-    );
-  }, [allDocuments, selectedIds]);
-
-  const tagUsage = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const entry of allDocuments) {
-      for (const id of entry.tagIds) counts[id] = (counts[id] ?? 0) + 1;
-    }
-    return counts;
-  }, [allDocuments]);
-
-  const trashSelection = useCallback(
-    (ids: string[]) => {
-      trash(ids);
-      endSelection();
-      setUndoable({
-        message: ids.length === 1 ? 'In den Papierkorb' : `${ids.length} in den Papierkorb`,
-        icon: Trash,
-        undo: () => restoreFromTrash(ids),
-      });
-    },
-    [endSelection, restoreFromTrash, trash]
-  );
-
   /**
    * Die Auswahl-Aktionsleiste sitzt im Tab-Rahmen und legt ihren Wunsch im
    * Zustand ab; hier wird er ausgefuehrt und wieder weggeraeumt.
@@ -253,82 +197,13 @@ export function LibraryScreen() {
   useEffect(() => {
     if (request === null) return;
 
-    if (request === 'move') setSheet('move');
-    if (request === 'tag') setSheet('tag');
-
-    if (request === 'favorite') {
-      // Setzen, nicht umschalten: bei gemischter Auswahl waere ein Umschalten
-      // nicht vorhersagbar. Sind schon alle Favorit, nimmt der Griff sie weg.
-      const allFavorite = selectedIds.every(
-        (id) => allDocuments.find((document) => document.id === id)?.favorite === true
-      );
-      setFavorite(selectedIds, !allFavorite);
-      setUndoable({
-        message: allFavorite ? 'Aus Favoriten entfernt' : 'Zu Favoriten hinzugefügt',
-        icon: Star,
-        undo: () => setFavorite(selectedIds, allFavorite),
-      });
-    }
-
-    if (request === 'trash') trashSelection(selectedIds);
+    if (request === 'move') actions.openMove();
+    if (request === 'tag') actions.openTag();
+    if (request === 'favorite') actions.toggleFavoriteSelection();
+    if (request === 'trash') actions.trashSelection(selectedIds);
 
     setRequest(null);
-  }, [request, selectedIds, allDocuments, setFavorite, setRequest, trashSelection]);
-
-  const menuItems: ContextMenuItem[] =
-    menuFor === null
-      ? []
-      : [
-          {
-            key: 'select',
-            label: 'Auswählen',
-            icon: Check,
-            onPress: () => {
-              startSelection(menuFor.id);
-              setMenuFor(null);
-            },
-          },
-          {
-            key: 'move',
-            label: 'Verschieben',
-            icon: FolderOpen,
-            onPress: () => {
-              startSelection(menuFor.id);
-              setMenuFor(null);
-              setSheet('move');
-            },
-          },
-          {
-            key: 'tag',
-            label: 'Taggen',
-            icon: TagIcon,
-            onPress: () => {
-              startSelection(menuFor.id);
-              setMenuFor(null);
-              setSheet('tag');
-            },
-          },
-          {
-            key: 'favorite',
-            label: menuFor.favorite ? 'Favorit entfernen' : 'Zu Favoriten',
-            icon: Star,
-            onPress: () => {
-              toggleFavorite(menuFor.id);
-              setMenuFor(null);
-            },
-          },
-          {
-            key: 'trash',
-            label: 'In den Papierkorb',
-            icon: Trash,
-            destructive: true,
-            onPress: () => {
-              const id = menuFor.id;
-              setMenuFor(null);
-              trashSelection([id]);
-            },
-          },
-        ];
+  }, [actions, request, selectedIds, setRequest]);
 
   const header = (
     <View>
@@ -352,7 +227,7 @@ export function LibraryScreen() {
                 // mehrere auf einmal.
                 onSortIn={() => {
                   startSelectionWith(newDocuments.map((entry) => entry.id));
-                  setSheet('move');
+                  actions.openMove();
                 }}
               />
             </View>
@@ -402,7 +277,7 @@ export function LibraryScreen() {
             selected={selected}
             last={index === documents.length - 1}
             onPress={() => openDocument(item)}
-            onLongPress={selectionMode ? undefined : () => setMenuFor(item)}
+            onLongPress={selectionMode ? undefined : () => actions.openMenu(item)}
             onToggleFavorite={() => toggleFavorite(item.id)}
           />
         </View>
@@ -418,28 +293,6 @@ export function LibraryScreen() {
       toggleFavorite,
       unavailable,
     ]
-  );
-
-  const toggleBulkTag = useCallback(
-    (tag: LibraryTag) => {
-      const all = selectedIds.every((id) =>
-        allDocuments.find((document) => document.id === id)?.tagIds.includes(tag.id)
-      );
-      for (const id of selectedIds) {
-        if (all) removeTag(id, tag.id);
-        else assignTag(id, tag.id);
-      }
-      setUndoable({
-        message: all ? `Tag „${tag.name}“ entfernt` : `Tag „${tag.name}“ gesetzt`,
-        undo: () => {
-          for (const id of selectedIds) {
-            if (all) assignTag(id, tag.id);
-            else removeTag(id, tag.id);
-          }
-        },
-      });
-    },
-    [allDocuments, assignTag, removeTag, selectedIds]
   );
 
   /**
@@ -514,10 +367,17 @@ export function LibraryScreen() {
         />
       )}
 
+      {/*
+        "Alle auswaehlen" wirkt auf die sichtbare Liste, nicht auf den Bestand:
+        gefiltert und sortiert ist sie schon, und was der Filter gerade
+        ausblendet, darf ein Tipp nicht mitwaehlen.
+      */}
       <SelectionHeader
         visible={selectionMode}
         count={selectedIds.length}
         top={insets.top}
+        allSelected={isAllSelected(visibleIds, selectedIds)}
+        onToggleAll={() => selectAll(isAllSelected(visibleIds, selectedIds) ? [] : visibleIds)}
         onCancel={endSelection}
       />
 
@@ -545,79 +405,16 @@ export function LibraryScreen() {
         visible={sheet === 'import'}
         onClose={() => setSheet(null)}
         onImported={(document) =>
-          setUndoable({
+          actions.notify({
             message: `„${document.title}“ importiert`,
             icon: FileHtml,
             undo: () => trash([document.id]),
           })
         }
-        onFailed={(reason) => setUndoable({ message: reason, icon: WarningCircle })}
+        onFailed={(reason) => actions.notify({ message: reason, icon: WarningCircle })}
       />
 
-      <MoveSheet
-        visible={sheet === 'move'}
-        documentIds={selectedIds}
-        onClose={() => setSheet(null)}
-        onMoved={(folderName) => {
-          const ids = [...selectedIds];
-          const before = ids.map(
-            (id) => allDocuments.find((document) => document.id === id)?.folderName ?? null
-          );
-          endSelection();
-          setUndoable({
-            message:
-              folderName === null
-                ? 'Aus dem Ordner genommen'
-                : `Nach „${folderName}“ verschoben`,
-            icon: FolderOpen,
-            undo: () => ids.forEach((id, index) => setFolder([id], before[index])),
-          });
-        }}
-      />
-
-      <TagSheet
-        visible={sheet === 'tag'}
-        as="modal"
-        title={
-          selectedIds.length === 1 ? 'Tag zuweisen' : `Tags für ${selectedIds.length} Dokumente`
-        }
-        query={tagQuery}
-        onChangeQuery={setTagQuery}
-        tags={tags}
-        assigned={commonTagIds}
-        usage={tagUsage}
-        onToggle={toggleBulkTag}
-        onCreate={(name) => {
-          const tag = createTag(name);
-          for (const id of selectedIds) assignTag(id, tag.id);
-          setTagQuery('');
-          setUndoable({
-            message: `Tag „${tag.name}“ gesetzt`,
-            undo: () => {
-              for (const id of selectedIds) removeTag(id, tag.id);
-            },
-          });
-        }}
-        onRemove={(tagId) => {
-          for (const id of selectedIds) removeTag(id, tagId);
-        }}
-        onClose={() => setSheet(null)}
-      />
-
-      <ContextMenu visible={menuFor !== null} items={menuItems} onClose={() => setMenuFor(null)} />
-
-      <Toast
-        visible={undoable !== null}
-        message={undoable?.message ?? ''}
-        icon={undoable?.icon ?? TagIcon}
-        actionLabel={undoable?.undo ? 'Rückgängig' : undefined}
-        onAction={() => {
-          undoable?.undo?.();
-          setUndoable(null);
-        }}
-        onHide={() => setUndoable(null)}
-        style={{ bottom: insets.bottom + size.screenPadding }}
-      />
+      {actions.overlays}
     </View>
   );
 }

@@ -14,41 +14,56 @@
  *   Aktionsbalken     schwebende Pille, blendet aus
  *   Info-Sheet        75 %, Scrim
  *   Tag-Sheet         darueber, ersetzt das Info-Sheet nicht
+ *   Suchen-Sheet      "Im Dokument suchen", bleibt beim Blaettern offen
  *   Toast             ueber allem — er sichert das zuletzt Getane ab
  *
  * Die Sheets sind Ebenen dieses Screens und keine Modals: nur so laesst sich
  * die Reihenfolge Info → Tag → Toast zuverlaessig festlegen (siehe
  * `SheetLayer` in `ui/BottomSheet`).
+ *
+ * **Suchen im Dokument (D2/D3).** Der Auftrag geht als `FindCommand` an die
+ * WebView, das Ergebnis kommt als Zaehlung zurueck (Begruendung des Weges im
+ * Kopf von `DocumentView`). Kommt der Viewer aus einem Suchtreffer, traegt die
+ * Adresse den Begriff (`/dokument/<id>?suche=…`): dann gewinnt der Sprung zur
+ * Fundstelle gegen die gemerkte Leseposition, und das Sheet steht eingeklappt
+ * da, damit sichtbar ist, warum das Dokument nicht oben beginnt. Gespeichert
+ * bleibt die alte Position trotzdem — beim naechsten Oeffnen ohne Begriff
+ * greift sie wieder.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Share, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
+import * as Sharing from 'expo-sharing';
 
-import { readDocument } from '../../data/cache';
+import { documentUri, readDocument } from '../../data/cache';
 import type { LibraryTag } from '../../data/library';
 import { sampleDocumentHtml } from '../../data/sampleDocumentHtml';
 import { useAppearanceStore } from '../../state/appearance';
 import { documentById, documentTags, useDocumentStore } from '../../state/documents';
 import { colorOf, useFolderStore } from '../../state/folders';
 import { useNetworkStore } from '../../state/network';
-import { useViewerStore } from '../../state/viewer';
+import { flushScroll, useViewerStore } from '../../state/viewer';
 import { bg, scrollThreshold, size, space } from '../../theme';
 import { ContextMenu, type ContextMenuItem } from '../../ui/ContextMenu';
 import {
   DownloadSimple,
   FolderOpen,
   Info,
+  MagnifyingGlass,
   PencilSimple,
+  ShareNetwork,
   Tag,
   Trash,
+  Warning,
   WifiSlash,
   type Icon,
 } from '../../ui/icons';
 import { Text } from '../../ui/Text';
 import { Toast } from '../../ui/Toast';
 import { MoveSheet } from '../folders/MoveSheet';
-import { DocumentView } from './DocumentView';
+import { DocumentView, type FindCommand } from './DocumentView';
+import { FindSheet } from './FindSheet';
 import { InfoSheet } from './InfoSheet';
 import { OfflineNotice } from './OfflineNotice';
 import { INFO_SHEET_RATIO, TAG_SHEET_RATIO } from './metrics';
@@ -63,12 +78,24 @@ interface UndoableAction {
   undo: () => void;
 }
 
+/**
+ * Eine Rueckmeldung, die sich nicht zuruecknehmen laesst — kein Netz, kein
+ * Teilen, ein Link, der nicht aufgeht. Sie steht im selben Toast, aber ohne
+ * "Rueckgaengig": eine Schaltflaeche ohne Wirkung waere schlimmer als keine.
+ */
+interface PlainNote {
+  message: string;
+  icon: Icon;
+}
+
 export interface ViewerScreenProps {
   documentId: string;
+  /** Begriff aus der Suche (`?suche=`): danach wird nach dem Laden gesprungen. */
+  searchTerm?: string;
   onBack: () => void;
 }
 
-export function ViewerScreen({ documentId, onBack }: ViewerScreenProps) {
+export function ViewerScreen({ documentId, searchTerm, onBack }: ViewerScreenProps) {
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
 
@@ -106,25 +133,98 @@ export function ViewerScreen({ documentId, onBack }: ViewerScreenProps) {
   const [chromeVisible, setChromeVisible] = useState(true);
   /** Der Inhalt aus dem Dateicache; `null`, solange er noch gelesen wird. */
   const [cachedHtml, setCachedHtml] = useState<string | null>(null);
-  const [activeSheet, setActiveSheet] = useState<null | 'info' | 'tags' | 'move'>(null);
+  const [activeSheet, setActiveSheet] = useState<null | 'info' | 'tags' | 'move' | 'find'>(
+    null
+  );
   const [menuOpen, setMenuOpen] = useState(false);
   const [tagQuery, setTagQuery] = useState('');
   const [undoable, setUndoable] = useState<UndoableAction | null>(null);
-  /** "Erneut versuchen" ohne Netz — eine Meldung ohne "Rueckgaengig". */
-  const [retryNote, setRetryNote] = useState(false);
+  /** Meldungen ohne "Rueckgaengig" — "Erneut versuchen", Teilen, Links. */
+  const [plainNote, setPlainNote] = useState<PlainNote | null>(null);
+
+  /** Suchen im Dokument: Eingabe, letzter Auftrag und die Antwort der WebView. */
+  const [findTerm, setFindTerm] = useState('');
+  const [findCommand, setFindCommand] = useState<FindCommand | null>(null);
+  const [findResult, setFindResult] = useState({ total: 0, index: 0 });
+  const [findCollapsed, setFindCollapsed] = useState(false);
+
+  /** Der Begriff aus der Adresse — leer, wenn der Viewer nicht aus der Suche kommt. */
+  const jumpTerm = (searchTerm ?? '').trim();
+
+  /**
+   * Kommt ein Suchbegriff mit, gewinnt er gegen die gemerkte Leseposition —
+   * sonst spraenge das Dokument erst an die alte Stelle und gleich darauf zur
+   * Fundstelle. Der gespeicherte Wert bleibt dabei unangetastet und gilt beim
+   * naechsten Oeffnen ohne Begriff wieder.
+   */
+  const restoreOffset = jumpTerm === '' ? initialOffset : 0;
 
   /**
    * Letzter gemeldeter Versatz. Er steht in einem Ref und nicht im Zustand:
    * jeder Scrollschritt wuerde sonst den ganzen Screen neu zeichnen, waehrend
    * gelesen wird.
    */
-  const lastOffset = useRef(initialOffset);
+  const lastOffset = useRef(restoreOffset);
+
+  /**
+   * Der Auftragszaehler steht in einem Ref: zweimal "weiter" mit demselben
+   * Begriff waeren sonst derselbe Auftrag, und die WebView bekaeme den zweiten
+   * Tipp nicht zu sehen.
+   */
+  const findId = useRef(0);
+
+  const sendFind = useCallback((kind: FindCommand['kind'], term: string) => {
+    findId.current += 1;
+    setFindCommand({ id: findId.current, kind, term });
+    if (kind === 'clear') setFindResult({ total: 0, index: 0 });
+  }, []);
+
+  /**
+   * Der Sprung aus einem Suchtreffer laeuft genau einmal, nach `onLoadEnd`:
+   * vorher gibt es im Dokument nichts zu finden.
+   */
+  const jumped = useRef(false);
+  const handleLoaded = useCallback(() => {
+    if (jumped.current || jumpTerm === '') return;
+    jumped.current = true;
+    setFindTerm(jumpTerm);
+    setFindCollapsed(true);
+    setActiveSheet('find');
+    sendFind('search', jumpTerm);
+  }, [jumpTerm, sendFind]);
+
+  /** Schliessen hebt die Hervorhebung im Dokument wieder auf. */
+  const closeFind = useCallback(() => {
+    setActiveSheet(null);
+    sendFind('clear', '');
+  }, [sendFind]);
 
   /**
    * "Geoeffnet 12×" im Info-Sheet zaehlt Besuche, nicht Renderdurchlaeufe —
    * der Waechter haelt den Zaehler auch unter React StrictMode richtig, das
    * Effekte in der Entwicklung zweimal ausfuehrt.
    */
+  /**
+   * Beim Verlassen des Viewers wird die gemerkte Leseposition sofort
+   * festgeschrieben. Waehrend des Lesens laeuft sie gedrosselt in die
+   * Datenbank (siehe `state/viewer.ts`) — ohne diesen Abschluss ginge der
+   * letzte Scrollschritt verloren, wenn man innerhalb der Drosselzeit
+   * zurueckgeht.
+   */
+  useEffect(() => flushScroll, []);
+
+  /**
+   * "Zuletzt geoeffnet" im Info-Sheet meint den Besuch **davor**. Der Effekt
+   * unten zaehlt beim Oeffnen hoch und setzt `lastOpenedAt` auf jetzt — ohne
+   * diesen Merkposten stuende im Sheet immer "gerade eben", was nichts
+   * aussagt. Der Wert wird beim ersten Rendern festgehalten, also bevor der
+   * Effekt laeuft.
+   */
+  const openedBefore = useRef<number | null | undefined>(undefined);
+  if (openedBefore.current === undefined && document !== undefined) {
+    openedBefore.current = document.lastOpenedAt;
+  }
+
   const counted = useRef(false);
   useEffect(() => {
     if (counted.current) return;
@@ -210,11 +310,36 @@ export function ViewerScreen({ documentId, onBack }: ViewerScreenProps) {
     [documentId, rememberScroll]
   );
 
+  /**
+   * Geteilt wird die Datei, nicht der Titel: ein Dokument weiterzugeben heisst,
+   * dass der Empfaenger es oeffnen kann.
+   *
+   * Die Erstbefuellung hat keine Datei (ihr HTML entsteht erst beim Oeffnen aus
+   * `sampleDocumentHtml`) — dort bleibt es beim System-Sheet mit dem Titel, und
+   * der Toast sagt warum. Ein Knopf, der stumm nichts Brauchbares tut, waere
+   * die schlechtere Antwort.
+   */
   const handleShare = useCallback(() => {
-    // Bis der Dateicache steht (Schritt 6), teilt das System-Sheet den Titel.
-    // Sobald das Dokument als Datei liegt, kommt hier sein Pfad hinein.
-    Share.share({ title, message: title }).catch(() => {});
-  }, [title]);
+    void (async () => {
+      const uri = cacheKey === null ? null : documentUri(cacheKey);
+      try {
+        if (uri !== null && (await Sharing.isAvailableAsync())) {
+          await Sharing.shareAsync(uri, { mimeType: 'text/html', dialogTitle: title });
+          return;
+        }
+        await Share.share({ title, message: title });
+        setPlainNote({ message: 'Dieses Beispiel hat keine Datei zum Teilen', icon: ShareNetwork });
+      } catch (error: unknown) {
+        const reason = error instanceof Error ? error.message : 'unbekannter Grund';
+        setPlainNote({ message: `Teilen fehlgeschlagen: ${reason}`, icon: Warning });
+      }
+    })();
+  }, [cacheKey, title]);
+
+  /** A2: ein externer Link, den das System nicht oeffnen konnte. */
+  const handleExternalLinkFailed = useCallback(() => {
+    setPlainNote({ message: 'Link ließ sich nicht öffnen', icon: Warning });
+  }, []);
 
   const toggleTag = useCallback(
     (tag: LibraryTag) => {
@@ -257,14 +382,14 @@ export function ViewerScreen({ documentId, onBack }: ViewerScreenProps) {
   const handleRetry = useCallback(() => {
     if (useNetworkStore.getState().isOnline) return;
     setUndoable(null);
-    setRetryNote(true);
+    setPlainNote({ message: 'Keine Verbindung', icon: WifiSlash });
   }, []);
 
   const handleKeepOffline = useCallback(() => {
     // Der Hinweis des letzten Versuchs steht sonst noch 5 Sekunden im Bild
     // und ueberdeckt die Rueckmeldung, die zur gerade gedrueckten Taste
     // gehoert.
-    setRetryNote(false);
+    setPlainNote(null);
     setKeepOffline(documentId, true);
     setUndoable({
       message: 'Für offline vorgemerkt',
@@ -290,6 +415,16 @@ export function ViewerScreen({ documentId, onBack }: ViewerScreenProps) {
   }, [documentId, onBack, trashDocuments]);
 
   const menuItems: ContextMenuItem[] = [
+    {
+      key: 'find',
+      label: 'Im Dokument suchen',
+      icon: MagnifyingGlass,
+      onPress: () => {
+        setMenuOpen(false);
+        setFindCollapsed(false);
+        setActiveSheet('find');
+      },
+    },
     {
       key: 'rename',
       label: 'Umbenennen',
@@ -357,10 +492,14 @@ export function ViewerScreen({ documentId, onBack }: ViewerScreenProps) {
       ) : (
         <DocumentView
           html={html}
-          initialOffset={initialOffset}
+          initialOffset={restoreOffset}
           textScale={textScale}
           dim={dimDocuments}
           onScroll={handleScroll}
+          onLoaded={handleLoaded}
+          onExternalLinkFailed={handleExternalLinkFailed}
+          find={findCommand}
+          onFindResult={setFindResult}
         />
       )}
 
@@ -395,6 +534,7 @@ export function ViewerScreen({ documentId, onBack }: ViewerScreenProps) {
         note={document.note}
         keepOffline={document.keepOffline}
         openCount={document.openCount}
+        lastOpenedAt={openedBefore.current ?? null}
         folderName={document.folderName}
         folderColor={colorOf(folders, document.folderName)}
         height={Math.round(windowHeight * INFO_SHEET_RATIO)}
@@ -437,22 +577,39 @@ export function ViewerScreen({ documentId, onBack }: ViewerScreenProps) {
         }
       />
 
+      <FindSheet
+        visible={activeSheet === 'find'}
+        collapsed={findCollapsed}
+        term={findTerm}
+        onChangeTerm={setFindTerm}
+        onSubmit={() => sendFind('search', findTerm.trim())}
+        // Erst nach einem abgeschickten Auftrag ist "nicht gefunden" eine
+        // Aussage — vorher stuende sie da, bevor jemand getippt hat.
+        searched={findCommand !== null && findCommand.kind !== 'clear'}
+        total={findResult.total}
+        index={findResult.index}
+        onNext={() => sendFind('next', findTerm.trim())}
+        onPrevious={() => sendFind('previous', findTerm.trim())}
+        onExpand={() => setFindCollapsed(false)}
+        onClose={closeFind}
+      />
+
       <ContextMenu visible={menuOpen} items={menuItems} onClose={() => setMenuOpen(false)} />
 
       <Toast
-        visible={undoable !== null || retryNote}
-        message={retryNote ? 'Keine Verbindung' : (undoable?.message ?? '')}
-        icon={retryNote ? WifiSlash : (undoable?.icon ?? Tag)}
+        visible={undoable !== null || plainNote !== null}
+        message={plainNote?.message ?? undoable?.message ?? ''}
+        icon={plainNote?.icon ?? undoable?.icon ?? Tag}
         // Ein fehlgeschlagener Versuch hat nichts, was sich zuruecknehmen
         // liesse — eine Schaltflaeche ohne Wirkung waere schlimmer als keine.
-        actionLabel={retryNote ? undefined : 'Rückgängig'}
+        actionLabel={plainNote === null ? 'Rückgängig' : undefined}
         onAction={() => {
           undoable?.undo();
           setUndoable(null);
         }}
         onHide={() => {
           setUndoable(null);
-          setRetryNote(false);
+          setPlainNote(null);
         }}
         style={{ bottom: insets.bottom + size.viewerActionBarInset }}
       />

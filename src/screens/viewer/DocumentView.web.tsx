@@ -17,6 +17,11 @@
  * WebView, und ein `iframe` hat davon keine Entsprechung. Sichtbar ist sie im
  * Web-Bild in der Papier-Vorschau des Reglers (Blatt `6b`), und genau dafuer
  * ist die Vorschau da.
+ *
+ * "Im Dokument suchen" (D2) fehlt hier ebenfalls: der Auftrag laeuft ueber
+ * `injectJavaScript` der nativen WebView, und in ein fremdes `iframe` laesst
+ * sich von aussen nichts einspritzen. Die Angaben `find` und `onFindResult`
+ * werden deshalb entgegengenommen und nicht benutzt.
  */
 import React from 'react';
 import { StyleSheet, View } from 'react-native';

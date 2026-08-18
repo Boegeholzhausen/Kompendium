@@ -21,7 +21,7 @@
  * Scrolloffset, und ein Kopf, der dem Finger einen Bildlauf hinterherhinkt,
  * faellt sofort auf.
  */
-import React from 'react';
+import React, { useMemo } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import Animated, {
   Extrapolation,
@@ -41,7 +41,6 @@ import { SyncIndicator, type SyncStatus } from '../../ui/SyncIndicator';
 import type { Notice } from '../../state/notice';
 import { Text } from '../../ui/Text';
 import type { LibraryFilter, ViewMode } from '../../state/library';
-import { topFilterTagIds } from '../../data/sampleLibrary';
 import { useDocumentStore } from '../../state/documents';
 import {
   CHIPS_OFFSET,
@@ -79,6 +78,9 @@ export interface LibraryHeaderProps {
   top: number;
 }
 
+/** So viele Tag-Chips stehen neben "Alle" und "Favoriten" (Blatt `1c`). */
+const TOP_FILTER_TAGS = 3;
+
 /** Breiten der grauen Pillen im Ladezustand — aus Blatt `4b` uebernommen. */
 const SKELETON_CHIP_WIDTHS = [72, 112, 96];
 
@@ -96,12 +98,38 @@ export function LibraryHeader({
   top,
 }: LibraryHeaderProps) {
   /**
-   * "Die meistgenutzten Tags" (Blatt `1c`). Solange es keine Nutzungszahlen
-   * gibt, sind es die beiden aus dem Blatt — aber aus dem Zustand geholt, denn
-   * die Tag-Verwaltung kann sie umbenennen oder loeschen.
+   * "Die meistgenutzten Tags" (Blatt `1c`) — gezaehlt am echten Bestand, nicht
+   * an einer festen Liste aus der Erstbefuellung. Wer eigene Tags anlegt, sieht
+   * sie hier; wer die Beispiel-Tags loescht, steht nicht ohne Chips da.
+   *
+   * Gezaehlt wird ueber alle nicht geloeschten Dokumente, absteigend nach
+   * Haeufigkeit, bei Gleichstand nach Name ('de'). Ein Tag, den kein Dokument
+   * traegt, erscheint nicht. Der aktive Filter haengt notfalls hinten an —
+   * sonst verschwaende der Chip, waehrend die Einschraenkung weiterwirkt.
    */
   const tags = useDocumentStore((state) => state.tags);
-  const filterTags = tags.filter((tag) => topFilterTagIds.includes(tag.id));
+  const documents = useDocumentStore((state) => state.documents);
+
+  const filterTags = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const document of documents) {
+      if (document.trashedAt !== null) continue;
+      for (const id of document.tagIds) counts[id] = (counts[id] ?? 0) + 1;
+    }
+
+    const used = tags
+      .filter((tag) => (counts[tag.id] ?? 0) > 0)
+      .sort((a, b) => {
+        const diff = (counts[b.id] ?? 0) - (counts[a.id] ?? 0);
+        return diff !== 0 ? diff : a.name.localeCompare(b.name, 'de');
+      });
+
+    const leaders = used.slice(0, TOP_FILTER_TAGS);
+    if (leaders.some((tag) => tag.id === activeFilter)) return leaders;
+
+    const active = used.find((tag) => tag.id === activeFilter);
+    return active === undefined ? leaders : [...leaders, active];
+  }, [activeFilter, documents, tags]);
 
   const progress = (value: number) => {
     'worklet';

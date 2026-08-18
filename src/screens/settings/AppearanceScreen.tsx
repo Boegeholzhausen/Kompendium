@@ -4,7 +4,7 @@
  * Drei Gruppen:
  *
  *   Bibliothek   "Standardansicht" als Zweier-Segment, "Sortierung" als
- *                Dreier-Segment
+ *                Vierer-Segment
  *   Lesen        "Textgröße im Viewer" mit Prozentwert, Regler, Skalenenden
  *                und **echter Vorschau** auf hellem Papier; dann "Dokumente
  *                abdunkeln" und "Bildschirm anlassen"
@@ -50,7 +50,7 @@ import { Slider } from '../../ui/Slider';
 import { Switch } from '../../ui/Switch';
 import { Text } from '../../ui/Text';
 
-const sortKeys: SortKey[] = ['recent', 'title', 'size'];
+const sortKeys: SortKey[] = ['recent', 'title', 'size', 'opened'];
 
 /**
  * Die Vorschau. Georgia 17/27 auf hellem Papier, mit dem Faktor multipliziert.

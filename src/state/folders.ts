@@ -27,19 +27,44 @@ export const folderColorChoices: { key: FolderColorName; value: string }[] = fol
   (key) => ({ key, value: tagPalette[key] })
 );
 
+/**
+ * Ein Toast, der den Screenwechsel ueberdauert.
+ *
+ * "Ordner loeschen" schliesst den Ordner-Detail-Screen — sein eigener Toast
+ * waere im selben Moment mit ihm weg, und ohne "Rueckgaengig" waere Loeschen
+ * die einzige unumkehrbare Aktion der App neben "Papierkorb leeren". Der
+ * Hinweis wird deshalb hier gemerkt und von der Ordner-Uebersicht gezeigt,
+ * also dort, wo der Nutzer nach dem Zurueckgehen steht.
+ */
+export interface PendingUndo {
+  message: string;
+  undo: () => void;
+}
+
 interface FolderState {
   folders: LibraryFolder[];
+  /** Siehe `PendingUndo` — gesetzt vom Ordner-Detail, gezeigt in der Uebersicht. */
+  pendingUndo: PendingUndo | null;
+  setPendingUndo: (pending: PendingUndo | null) => void;
   hydrate: (folders: LibraryFolder[]) => void;
   /** Legt an; ein vorhandener Name gewinnt, damit nichts doppelt entsteht. */
   createFolder: (name: string, color: string, keepOffline: boolean) => LibraryFolder;
   renameFolder: (from: string, to: string) => void;
+  /**
+   * Loescht nur den Ordner. Die Dokumente darin bleiben und landen in "Nicht
+   * einsortiert"; im Dokument-Zustand erledigt das `clearFolderEverywhere`.
+   */
+  deleteFolder: (name: string) => void;
   setKeepOffline: (name: string, keep: boolean) => void;
 }
 
 export const useFolderStore = create<FolderState>((set, get) => ({
   folders: [],
+  pendingUndo: null,
 
   hydrate: (folders) => set({ folders }),
+
+  setPendingUndo: (pending) => set({ pendingUndo: pending }),
 
   createFolder: (name, color, keepOffline) => {
     const trimmed = name.trim();
@@ -61,6 +86,11 @@ export const useFolderStore = create<FolderState>((set, get) => ({
         folder.name === from ? { ...folder, name: to.trim() } : folder
       ),
     }));
+  },
+
+  deleteFolder: (name) => {
+    persist(() => repository.deleteFolder(name));
+    set((state) => ({ folders: state.folders.filter((folder) => folder.name !== name) }));
   },
 
   setKeepOffline: (name, keep) =>

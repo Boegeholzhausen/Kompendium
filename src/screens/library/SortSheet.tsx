@@ -2,8 +2,8 @@
  * Sortierung — Bottom-Sheet hinter der Schaltflaeche `arrows-down-up`.
  *
  * Im Prototyp gibt es kein eigenes Blatt dafuer; das Handoff-Dokument fuehrt
- * `sort: 'recent' | 'title' | 'size'` aber unter "State Management". Das Sheet
- * benutzt deshalb ausschliesslich vorhandene Teile: die Sheet-Huelle
+ * `sort` aber unter "State Management". Das Sheet benutzt deshalb
+ * ausschliesslich vorhandene Teile: die Sheet-Huelle
  * (Komponente 8) und Zeilen in der Form des Kontextmenues (Komponente 9), die
  * gewaehlte Zeile mit Haken UND Mint — Farbe traegt nie allein die Bedeutung.
  */
@@ -17,7 +17,7 @@ import { Check } from '../../ui/icons';
 import { PressableScale } from '../../ui/press';
 import { Text } from '../../ui/Text';
 
-const order: SortKey[] = ['recent', 'title', 'size'];
+const order: SortKey[] = ['recent', 'title', 'size', 'opened'];
 
 export interface SortSheetProps {
   visible: boolean;

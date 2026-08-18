@@ -85,6 +85,15 @@ export async function setDocumentTags(documentId: string, tagIds: string[]): Pro
   documents.set(documentId, { ...current, tagIds: [...tagIds] });
 }
 
+export async function expiredTrashIds(
+  before: number
+): Promise<{ id: string; cacheKey: string | null }[]> {
+  seed();
+  return [...documents.values()]
+    .filter((document) => document.trashedAt !== null && document.trashedAt < before)
+    .map((document) => ({ id: document.id, cacheKey: document.cacheKey }));
+}
+
 export async function deleteDocuments(ids: string[]): Promise<void> {
   for (const id of ids) documents.delete(id);
 }
@@ -100,6 +109,14 @@ export async function renameFolder(from: string, to: string): Promise<void> {
   if (folder) folder.name = to;
   for (const [id, document] of documents) {
     if (document.folderName === from) documents.set(id, { ...document, folderName: to });
+  }
+}
+
+export async function deleteFolder(name: string): Promise<void> {
+  const at = folders.findIndex((entry) => entry.name === name);
+  if (at !== -1) folders.splice(at, 1);
+  for (const [id, document] of documents) {
+    if (document.folderName === name) documents.set(id, { ...document, folderName: null });
   }
 }
 

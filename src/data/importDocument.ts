@@ -13,6 +13,13 @@
  * nicht zwischen zwei Sitzungen aendern." Deshalb steht das Ergebnis in der
  * Datenbank und wird nie neu gerechnet.
  *
+ * Dieselbe Datei zweimal zu importieren ist meist ein Versehen. Erkannt wird
+ * das an **Titel und Groesse in Bytes** — keine Pruefsumme: ein Hashlauf ueber
+ * ein paar hundert Kilobyte bei jedem Import waere spuerbar, und fuer die
+ * Rueckfrage "hast du das nicht schon?" reicht das Paar aus. Zwei wirklich
+ * verschiedene Dokumente mit demselben Titel UND derselben Byte-Zahl sind
+ * selten, und die Antwort darauf ist ohnehin nur eine Frage, keine Sperre.
+ *
  * Erkannt wird ueber Zaehlung, nicht ueber einen HTML-Parser: React Native hat
  * kein DOM, und fuer fuenf Formen genuegt es, die Auszeichnungen zu zaehlen.
  * Ein fehlerhaftes Dokument fuehrt so hoechstens zur falschen Kachel, nie zu
@@ -23,10 +30,10 @@ import * as DocumentPicker from 'expo-document-picker';
 import { File } from 'expo-file-system';
 
 import type { DocType } from '../theme/tile';
-import { writeDocument } from './cache';
+import { deleteDocument, writeDocument } from './cache';
 import type { DocumentSource, StoredDocument } from './library';
 import { plainText } from './plainText';
-import { indexDocumentText } from './search';
+import { forgetDocumentText, indexDocumentText } from './search';
 
 /** Was ein Importweg liefert, bevor daraus eine Zeile wird. */
 export interface ImportedFile {
@@ -37,7 +44,18 @@ export interface ImportedFile {
 }
 
 export type ImportOutcome =
-  | { ok: true; document: StoredDocument }
+  | {
+      ok: true;
+      document: StoredDocument;
+      /**
+       * Gleicher Titel, gleiche Byte-Zahl, nicht im Papierkorb: das Sheet
+       * fragt dann nach, statt stumm einen zweiten Eintrag anzulegen. Das
+       * Dokument ist trotzdem fertig — wer "Trotzdem importieren" waehlt, soll
+       * nicht auf einen zweiten Lauf warten. Bei "Abbrechen" raeumt
+       * `discardImport` die Datei wieder weg.
+       */
+      duplicateOf?: StoredDocument;
+    }
   | { ok: false; reason: string }
   /** Der Nutzer hat den Picker geschlossen — kein Fehler, keine Meldung. */
   | { ok: false; reason: null };
@@ -110,7 +128,11 @@ function newId(): string {
  * Der gemeinsame Abschluss aller drei Wege. Er kennt keinen Picker und keine
  * Adresse mehr — nur HTML, einen Hinweis auf den Namen und die Herkunft.
  */
-export async function documentFrom(input: ImportedFile): Promise<ImportOutcome> {
+export async function documentFrom(
+  input: ImportedFile,
+  /** Der vorhandene Bestand — Grundlage der Duplikat-Rueckfrage. */
+  existing: StoredDocument[] = []
+): Promise<ImportOutcome> {
   if (!input.html.trim()) return { ok: false, reason: 'Der Inhalt ist leer.' };
   if (!looksLikeHtml(input.html)) {
     return { ok: false, reason: 'Das sieht nicht nach HTML aus.' };
@@ -123,11 +145,18 @@ export async function documentFrom(input: ImportedFile): Promise<ImportOutcome> 
   indexDocumentText(id, input.html);
   const at = Date.now();
 
+  const title = detectTitle(input.html, input.hint);
+  const duplicateOf = existing.find(
+    (document) =>
+      document.trashedAt === null && document.title === title && document.sizeBytes === sizeBytes
+  );
+
   return {
     ok: true,
+    duplicateOf,
     document: {
       id,
-      title: detectTitle(input.html, input.hint),
+      title,
       docType: detectDocType(input.html),
       // Importierte Dokumente landen in "Neu", bis sie einsortiert sind.
       folderName: null,
@@ -151,7 +180,7 @@ export async function documentFrom(input: ImportedFile): Promise<ImportOutcome> 
 }
 
 /** Weg 1 — "Datei wählen · HTML-Datei vom Gerät". */
-export async function importFromFile(): Promise<ImportOutcome> {
+export async function importFromFile(existing: StoredDocument[] = []): Promise<ImportOutcome> {
   const result = await DocumentPicker.getDocumentAsync({
     type: ['text/html', 'application/xhtml+xml'],
     copyToCacheDirectory: true,
@@ -165,17 +194,19 @@ export async function importFromFile(): Promise<ImportOutcome> {
 
   try {
     const html = await new File(asset.uri).text();
-    return documentFrom({ html, hint: asset.name, source: 'file' });
+    return documentFrom({ html, hint: asset.name, source: 'file' }, existing);
   } catch {
     return { ok: false, reason: 'Die Datei liess sich nicht lesen.' };
   }
 }
 
 /** Weg 2 — "Aus Zwischenablage · HTML-Code einfügen". */
-export async function importFromClipboard(): Promise<ImportOutcome> {
+export async function importFromClipboard(
+  existing: StoredDocument[] = []
+): Promise<ImportOutcome> {
   const html = await Clipboard.getStringAsync();
   if (!html.trim()) return { ok: false, reason: 'Die Zwischenablage ist leer.' };
-  return documentFrom({ html, hint: '', source: 'clipboard' });
+  return documentFrom({ html, hint: '', source: 'clipboard' }, existing);
 }
 
 /**
@@ -184,7 +215,10 @@ export async function importFromClipboard(): Promise<ImportOutcome> {
  * Ohne Schema wird `https` ergaenzt: wer eine Adresse eintippt, schreibt sie
  * selten vollstaendig, und `http` waere die schlechtere Vermutung.
  */
-export async function importFromUrl(address: string): Promise<ImportOutcome> {
+export async function importFromUrl(
+  address: string,
+  existing: StoredDocument[] = []
+): Promise<ImportOutcome> {
   const trimmed = address.trim();
   if (!trimmed) return { ok: false, reason: null };
 
@@ -196,8 +230,18 @@ export async function importFromUrl(address: string): Promise<ImportOutcome> {
       return { ok: false, reason: `Die Adresse antwortete mit ${response.status}.` };
     }
     const html = await response.text();
-    return documentFrom({ html, hint: url, source: 'url' });
+    return documentFrom({ html, hint: url, source: 'url' }, existing);
   } catch {
     return { ok: false, reason: 'Die Adresse war nicht erreichbar.' };
   }
+}
+
+/**
+ * Einen vorbereiteten Import wieder wegwerfen — nach "Abbrechen" in der
+ * Duplikat-Rueckfrage. Eine Datenbankzeile gibt es zu diesem Zeitpunkt noch
+ * nicht, nur die Datei im Cache und den Text im Suchpuffer.
+ */
+export async function discardImport(document: StoredDocument): Promise<void> {
+  forgetDocumentText(document.id);
+  if (document.cacheKey !== null) await deleteDocument(document.cacheKey);
 }

@@ -22,7 +22,12 @@ import { ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
-import { countWithoutFilters, searchDocuments, type SearchInput } from '../../data/search';
+import {
+  bestSingleTerm,
+  countWithoutFilters,
+  searchDocuments,
+  type SearchInput,
+} from '../../data/search';
 import { useDocumentStore } from '../../state/documents';
 import { useFolderStore } from '../../state/folders';
 import {
@@ -40,7 +45,7 @@ import {
   space,
   text as textColor,
 } from '../../theme';
-import { PrimaryButton } from '../../ui/Button';
+import { PrimaryButton, TextButton } from '../../ui/Button';
 import { ChoiceSheet, type ChoiceOption } from '../../ui/ChoiceSheet';
 import { FilterChip } from '../../ui/FilterChip';
 import {
@@ -92,6 +97,7 @@ export function SearchScreen() {
   const setQuery = useSearchStore((state) => state.setQuery);
   const submit = useSearchStore((state) => state.submit);
   const clear = useSearchStore((state) => state.clear);
+  const clearRecent = useSearchStore((state) => state.clearRecent);
   const setFolderFilter = useSearchStore((state) => state.setFolderFilter);
   const toggleTagFilter = useSearchStore((state) => state.toggleTagFilter);
   const setPeriod = useSearchStore((state) => state.setPeriod);
@@ -110,6 +116,15 @@ export function SearchScreen() {
 
   const results = useMemo(() => searchDocuments(input), [input]);
   const unfilteredCount = useMemo(() => countWithoutFilters(input), [input]);
+  /**
+   * Nur fuer die Leerdarstellung: bei mehreren Begriffen ist die Frage
+   * "welches Wort war zu viel?" — deshalb erst rechnen, wenn nichts gefunden
+   * wurde.
+   */
+  const singleTerm = useMemo(
+    () => (results.length === 0 ? bestSingleTerm(input) : null),
+    [input, results.length]
+  );
 
   const filterCount = activeFilterCount(filters);
   const hasQuery = submitted.trim().length > 0;
@@ -149,7 +164,14 @@ export function SearchScreen() {
         ? (tags.find((tag) => tag.id === filters.tagIds[0])?.name ?? 'Tags')
         : `Tags · ${filters.tagIds.length}`;
 
-  const openDocument = (id: string) => router.push(`/dokument/${id}`);
+  /**
+   * Der Begriff faehrt als Adressparameter mit: der Viewer sucht ihn nach dem
+   * Laden noch einmal und springt zur ersten Fundstelle, statt den Nutzer oben
+   * im Dokument abzusetzen (D3). Als Objekt statt als Zeichenkette, weil
+   * `typedRoutes` in `app.json` die Route sonst nicht mehr kennt.
+   */
+  const openDocument = (id: string) =>
+    router.push({ pathname: '/dokument/[id]', params: { id, suche: submitted } });
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
@@ -237,6 +259,15 @@ export function SearchScreen() {
                   />
                 ))}
               </View>
+              {/* Der Verlauf gehoert dem Nutzer: er muss ihn auch wieder
+                  loswerden koennen. Kein Toast — die Chips verschwinden
+                  sichtbar, das ist die Rueckmeldung. */}
+              <TextButton
+                label="Verlauf leeren"
+                compact
+                onPress={clearRecent}
+                style={styles.clearRecent}
+              />
             </>
           ) : null}
 
@@ -292,6 +323,18 @@ export function SearchScreen() {
           <Text variant="body" tone="secondary" style={styles.emptyReason}>
             {reason}
           </Text>
+          {/*
+            Ein Satz, kein zweiter Zustand: bei mehreren Begriffen sagt er,
+            welcher davon allein etwas gefunden haette. Damit ist klar, dass
+            die Kombination zu eng war und nicht der Bestand zu duenn.
+          */}
+          {singleTerm !== null ? (
+            <Text variant="body" tone="secondary" style={styles.emptyReason}>
+              {`„${singleTerm.term}“ allein: ${
+                singleTerm.count === 1 ? '1 Treffer' : `${singleTerm.count} Treffer`
+              }`}
+            </Text>
+          ) : null}
           {filterCount > 0 ? (
             <PrimaryButton
               label="Filter zurücksetzen"
@@ -374,6 +417,10 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: space['8'],
     marginTop: space['12'],
+  },
+  clearRecent: {
+    alignSelf: 'flex-start',
+    marginTop: space['8'],
   },
   tagsLabel: {
     marginTop: space['24'],

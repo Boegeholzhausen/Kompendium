@@ -10,8 +10,17 @@
  * Verlauf ("Zuletzt gesucht") muss den Screen ueberdauern, und der Weg
  * Bibliothek → Suche → Viewer → zurueck soll den Begriff und die Filter
  * wiederfinden.
+ *
+ * Der Verlauf ueberdauert seit Paket B auch den Neustart: er liegt als
+ * JSON-Array in der vorhandenen `settings`-Tabelle. Er startet dabei LEER —
+ * die drei Begriffe aus Blatt `3c` waren eine Beschriftung des Entwurfs, keine
+ * Nutzung. Eine App, die beim ersten Start behauptet, man habe schon nach
+ * "annuität" gesucht, erzaehlt eine Vergangenheit, die es nicht gibt.
  */
 import { create } from 'zustand';
+
+import { persist } from '../data/db/persist';
+import { setSetting } from '../data/db/repository';
 
 /** Zeitraum-Filter des Dropdown-Chips (Blatt `3d`). */
 export type PeriodKey = 'week' | 'month' | 'year';
@@ -44,11 +53,16 @@ interface SearchState {
   recentQueries: string[];
   filters: SearchFilters;
 
+  /** Gespeicherten Verlauf uebernehmen; kaputtes JSON → leerer Verlauf. */
+  hydrate: (settings: Record<string, string>) => void;
+
   setQuery: (query: string) => void;
   /** Absenden: Begriff uebernehmen und in den Verlauf legen. */
   submit: (query?: string) => void;
   /** Feld leeren; der Screen faellt auf "Zuletzt gesucht" zurueck. */
   clear: () => void;
+  /** "Verlauf leeren" unter der Chip-Reihe. */
+  clearRecent: () => void;
 
   setFolderFilter: (folderName: string | null) => void;
   toggleTagFilter: (tagId: string) => void;
@@ -56,17 +70,37 @@ interface SearchState {
   resetFilters: () => void;
 }
 
-/** Bis es echte Nutzung gibt, stehen die drei Begriffe aus Blatt `3c` im Verlauf. */
-const initialRecent = ['annuität', 'kündigungsfrist', 'cloud'];
-
 /** Mehr als sechs Begriffe braeuchten eine zweite Zeile ohne Nutzen. */
 const RECENT_MAX = 6;
+
+export const SETTING_RECENT_QUERIES = 'search.recentQueries';
+
+function storeRecent(recentQueries: string[]): void {
+  persist(() => setSetting(SETTING_RECENT_QUERIES, JSON.stringify(recentQueries)));
+}
 
 export const useSearchStore = create<SearchState>((set) => ({
   query: '',
   submitted: '',
-  recentQueries: initialRecent,
+  recentQueries: [],
   filters: noFilters,
+
+  hydrate: (settings) => {
+    const raw = settings[SETTING_RECENT_QUERIES];
+    if (raw === undefined) return;
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return;
+      set({
+        recentQueries: parsed
+          .filter((entry): entry is string => typeof entry === 'string' && entry.trim() !== '')
+          .slice(0, RECENT_MAX),
+      });
+    } catch {
+      // Kaputtes JSON ist kein Grund, den Start abzubrechen — dann steht der
+      // Verlauf eben leer da, genau wie beim ersten Start.
+    }
+  },
 
   setQuery: (query) => set({ query }),
 
@@ -74,17 +108,20 @@ export const useSearchStore = create<SearchState>((set) => ({
     set((state) => {
       const next = (query ?? state.query).trim();
       if (!next) return { query: '', submitted: '' };
-      return {
-        query: next,
-        submitted: next,
-        recentQueries: [
-          next,
-          ...state.recentQueries.filter((entry) => entry.toLowerCase() !== next.toLowerCase()),
-        ].slice(0, RECENT_MAX),
-      };
+      const recentQueries = [
+        next,
+        ...state.recentQueries.filter((entry) => entry.toLowerCase() !== next.toLowerCase()),
+      ].slice(0, RECENT_MAX);
+      storeRecent(recentQueries);
+      return { query: next, submitted: next, recentQueries };
     }),
 
   clear: () => set({ query: '', submitted: '' }),
+
+  clearRecent: () => {
+    storeRecent([]);
+    set({ recentQueries: [] });
+  },
 
   setFolderFilter: (folderName) =>
     set((state) => ({ filters: { ...state.filters, folderName } })),

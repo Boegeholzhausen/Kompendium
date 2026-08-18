@@ -8,11 +8,17 @@
  * "In den Papierkorb" steht **ausserhalb** des scrollenden Bereichs hinter
  * einer eigenen Trennlinie: es darf nie unter den Daumen rutschen, waehrend
  * jemand Tags setzt.
+ *
+ * Titel und Notiz haben einen **eigenen Zustand im Sheet**. Nach draussen
+ * gemeldet wird gedrosselt (fruehestens alle 600 ms) und in jedem Fall beim
+ * Verlassen des Feldes sowie beim Schliessen. Vorher ging jeder einzelne
+ * Buchstabe in die Datenbank und setzte `updatedAt` — der Titel wanderte beim
+ * Tippen live in "Zuletzt geaendert" nach oben.
  */
-import React from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, TextInput, View } from 'react-native';
 
-import { formatBytes, formatDate } from '../../data/format';
+import { formatBytes, formatDate, formatRelative } from '../../data/format';
 import { sourceLabels, type LibraryTag, type StoredDocument } from '../../data/library';
 import {
   bg,
@@ -31,6 +37,14 @@ import { PressableScale } from '../../ui/press';
 import { Switch } from '../../ui/Switch';
 import { AddTagChip, TagChip } from '../../ui/TagChip';
 import { Text } from '../../ui/Text';
+
+/**
+ * Wie lange ein Tastendruck hoechstens auf seinen Weg nach draussen wartet.
+ * 600 ms sind laenger als eine Tastenfolge und kuerzer als eine Denkpause —
+ * wer weitertippt, loest keinen zweiten Schreibvorgang aus, wer aufhoert,
+ * merkt die Verzoegerung nicht.
+ */
+const REPORT_DELAY = 600;
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -68,6 +82,12 @@ export interface InfoSheetProps {
   note: string;
   keepOffline: boolean;
   openCount: number;
+  /**
+   * Zeitpunkt des Besuchs **davor** — `null`, wenn es keinen gab. Der Viewer
+   * zaehlt beim Oeffnen hoch, bevor dieses Sheet aufgeht; er reicht deshalb
+   * den gemerkten Wert herein, sonst staende hier immer "gerade eben".
+   */
+  lastOpenedAt: number | null;
   height: number;
   onClose: () => void;
   onChangeTitle: (title: string) => void;
@@ -89,6 +109,7 @@ export function InfoSheet({
   note,
   keepOffline,
   openCount,
+  lastOpenedAt,
   height,
   onClose,
   onChangeTitle,
@@ -103,12 +124,78 @@ export function InfoSheet({
   // "Datei-Import" fuer alles, was es noch gar nicht geben konnte.
   const source = sourceLabels[document.source];
 
+  /*
+    Der Entwurf im Sheet: er fuehrt das Feld, nicht der Bestand. Beim Wechsel
+    auf ein anderes Dokument wird er zurueckgesetzt — offene Aenderungen des
+    vorherigen sind zu diesem Zeitpunkt schon gemeldet (`flush` beim
+    Schliessen).
+  */
+  const [draftTitle, setDraftTitle] = useState(title);
+  const [draftNote, setDraftNote] = useState(note);
+
+  const pending = useRef<{ title?: string; note?: string }>({});
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flush = useCallback(() => {
+    if (timer.current !== null) {
+      clearTimeout(timer.current);
+      timer.current = null;
+    }
+    const waiting = pending.current;
+    pending.current = {};
+    if (waiting.title !== undefined) onChangeTitle(waiting.title);
+    if (waiting.note !== undefined) onChangeNote(waiting.note);
+  }, [onChangeNote, onChangeTitle]);
+
+  /** Beim Aushaengen darf nichts liegenbleiben — auch ohne "Schliessen". */
+  const flushRef = useRef(flush);
+  flushRef.current = flush;
+  useEffect(() => () => flushRef.current(), []);
+
+  const schedule = () => {
+    if (timer.current !== null) return;
+    timer.current = setTimeout(() => {
+      timer.current = null;
+      flush();
+    }, REPORT_DELAY);
+  };
+
+  const changeTitle = (next: string) => {
+    setDraftTitle(next);
+    pending.current.title = next;
+    schedule();
+  };
+
+  const changeNote = (next: string) => {
+    setDraftNote(next);
+    pending.current.note = next;
+    schedule();
+  };
+
+  /*
+    Der Bestand nur als Rueckfallebene: beim Wechsel des Dokuments fuellt er
+    die Felder neu. Als Ref, damit ein Schreibvorgang waehrend des Tippens den
+    Entwurf nicht ueberschreibt — der Zustand kommt dabei ja zurueck.
+  */
+  const stored = useRef({ title, note });
+  stored.current = { title, note };
+
+  const documentId = document.id;
+  useEffect(() => {
+    pending.current = {};
+    setDraftTitle(stored.current.title);
+    setDraftNote(stored.current.note);
+  }, [documentId]);
+
   return (
     <SheetLayer
       visible={visible}
       height={height}
       title="Dokument"
-      onClose={onClose}
+      onClose={() => {
+        flush();
+        onClose();
+      }}
       footer={
         <PressableScale
           style={styles.trash}
@@ -139,8 +226,9 @@ export function InfoSheet({
           <View style={styles.box}>
             <TextInput
               style={[typeScale.body, styles.input]}
-              value={title}
-              onChangeText={onChangeTitle}
+              value={draftTitle}
+              onChangeText={changeTitle}
+              onBlur={flush}
               selectionColor={textColor.primary}
               maxFontSizeMultiplier={1.3}
               accessibilityLabel="Titel des Dokuments"
@@ -191,8 +279,9 @@ export function InfoSheet({
           <View style={[styles.box, styles.noteBox]}>
             <TextInput
               style={[typeScale.body, styles.input, styles.noteInput]}
-              value={note}
-              onChangeText={onChangeNote}
+              value={draftNote}
+              onChangeText={changeNote}
+              onBlur={flush}
               placeholder="Notiz hinzufügen"
               placeholderTextColor={textColor.tertiary}
               selectionColor={textColor.primary}
@@ -222,6 +311,10 @@ export function InfoSheet({
           <MetaRow label="Importiert am" value={formatDate(document.importedAt)} />
           <MetaRow label="Größe" value={formatBytes(document.sizeBytes)} />
           <MetaRow label="Geöffnet" value={`${openCount}×`} />
+          <MetaRow
+            label="Zuletzt geöffnet"
+            value={lastOpenedAt === null ? 'noch nie' : formatRelative(lastOpenedAt)}
+          />
           <MetaRow label="Quelle" value={source} />
         </View>
       </ScrollView>

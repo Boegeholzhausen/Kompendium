@@ -35,12 +35,6 @@ export const libraryTags: LibraryTag[] = [
 ];
 
 /**
- * Die Filter-Chip-Zeile zeigt laut Handoff-Dokument "die meistgenutzten Tags".
- * Bis es echte Nutzungszahlen gibt, stehen hier die beiden aus Blatt `1c`.
- */
-export const topFilterTagIds = ['finanzen', 'recht'];
-
-/**
  * Ordnerfarben der Erstbefuellung. Sie tragen laut Handoff-Dokument nur das
  * `folder`-Icon, nie eine Flaeche — sonst konkurrieren sie mit den
  * Dokumentkacheln. Blatt `3a` zeigt "Finanzen" in `sky`, der Rest folgt der

@@ -18,6 +18,13 @@
  * zweite Sheet legt sich ueber das erste, statt es zu ersetzen — der Rueckweg
  * fuehrt in die Auswahl der drei Wege, nicht in die Bibliothek.
  *
+ * **Abweichung:** dieselbe Datei zweimal zu importieren ergab bisher zwei
+ * Eintraege, ohne jeden Hinweis. Erkennt `documentFrom` ein Dokument mit
+ * gleichem Titel und gleicher Byte-Zahl, fragt das Sheet nach — im
+ * Kontextmenue-Muster wie "Papierkorb leeren", mit dem Titel des vorhandenen
+ * Dokuments als Hinweiszeile. "Abbrechen" schliesst ohne Meldung und wirft die
+ * schon geschriebene Datei wieder weg (`discardImport`).
+ *
  * Waehrend ein Weg laeuft, sind alle drei deaktiviert (Farbwechsel auf
  * `text/tertiary`, nie Deckkraft) — ein zweiter Tipp waehrend des Ladens
  * legte sonst zwei Dokumente an.
@@ -26,6 +33,7 @@ import React, { useEffect, useState } from 'react';
 import { StyleSheet, TextInput, View } from 'react-native';
 
 import {
+  discardImport,
   importFromClipboard,
   importFromFile,
   importFromUrl,
@@ -46,7 +54,15 @@ import {
 import { typeScale } from '../../theme/typography';
 import { BottomSheet } from '../../ui/BottomSheet';
 import { PrimaryButton, SecondaryButton } from '../../ui/Button';
-import { CaretRight, ClipboardText, FileHtml, LinkSimple, type Icon } from '../../ui/icons';
+import { ContextMenu, type ContextMenuItem } from '../../ui/ContextMenu';
+import {
+  CaretRight,
+  ClipboardText,
+  FileHtml,
+  LinkSimple,
+  WarningCircle,
+  type Icon,
+} from '../../ui/icons';
 import { PressableScale } from '../../ui/press';
 import { Text } from '../../ui/Text';
 
@@ -74,25 +90,42 @@ export interface ImportSheetProps {
 
 export function ImportSheet({ visible, onClose, onImported, onFailed }: ImportSheetProps) {
   const addDocument = useDocumentStore((state) => state.addDocument);
+  /** Grundlage der Duplikat-Pruefung — der Bestand, wie er gerade ist. */
+  const documents = useDocumentStore((state) => state.documents);
 
   const [busy, setBusy] = useState(false);
   const [urlOpen, setUrlOpen] = useState(false);
   const [address, setAddress] = useState('');
+  /** Fertiger Import, der noch auf die Antwort der Rueckfrage wartet. */
+  const [duplicate, setDuplicate] = useState<{
+    document: StoredDocument;
+    existing: StoredDocument;
+  } | null>(null);
 
   useEffect(() => {
     if (!visible) {
       setUrlOpen(false);
       setAddress('');
       setBusy(false);
+      setDuplicate(null);
     }
   }, [visible]);
+
+  const accept = (document: StoredDocument) => {
+    setDuplicate(null);
+    addDocument(document);
+    onImported?.(document);
+    onClose();
+  };
 
   const finish = (outcome: ImportOutcome) => {
     setBusy(false);
     if (outcome.ok) {
-      addDocument(outcome.document);
-      onImported?.(outcome.document);
-      onClose();
+      if (outcome.duplicateOf !== undefined) {
+        setDuplicate({ document: outcome.document, existing: outcome.duplicateOf });
+        return;
+      }
+      accept(outcome.document);
       return;
     }
     // `reason: null` heisst: der Nutzer hat abgebrochen. Dazu gibt es nichts
@@ -107,20 +140,56 @@ export function ImportSheet({ visible, onClose, onImported, onFailed }: ImportSh
       return;
     }
     setBusy(true);
-    finish(key === 'file' ? await importFromFile() : await importFromClipboard());
+    finish(
+      key === 'file' ? await importFromFile(documents) : await importFromClipboard(documents)
+    );
   };
 
   const loadUrl = async () => {
     if (busy || address.trim().length === 0) return;
     setBusy(true);
-    const outcome = await importFromUrl(address);
+    const outcome = await importFromUrl(address, documents);
     setUrlOpen(false);
     finish(outcome);
   };
 
+  /**
+   * Die erste Zeile ist der Hinweis, nicht die Aktion: sie nennt den Titel des
+   * vorhandenen Dokuments und ist deshalb `disabled`. Darunter der eine Weg
+   * weiter — "Abbrechen" ist der Rueckweg des Menues selbst.
+   */
+  const duplicateItems: ContextMenuItem[] = [
+    {
+      key: 'existing',
+      label: `Schon vorhanden: „${duplicate?.existing.title ?? ''}“`,
+      icon: WarningCircle,
+      disabled: true,
+    },
+    {
+      key: 'anyway',
+      label: 'Trotzdem importieren',
+      icon: FileHtml,
+      onPress: () => {
+        if (duplicate !== null) accept(duplicate.document);
+      },
+    },
+  ];
+
+  /** Abbrechen: die Datei ist schon geschrieben, sie muss wieder weg. */
+  const dismissDuplicate = () => {
+    const waiting = duplicate;
+    setDuplicate(null);
+    if (waiting !== null) void discardImport(waiting.document);
+    onClose();
+  };
+
   return (
     <>
-      <BottomSheet visible={visible && !urlOpen} title="Dokument hinzufügen" onClose={onClose}>
+      <BottomSheet
+        visible={visible && !urlOpen && duplicate === null}
+        title="Dokument hinzufügen"
+        onClose={onClose}
+      >
         <View style={styles.ways}>
           {ways.map((way) => {
             const WayIcon = way.icon;
@@ -162,7 +231,7 @@ export function ImportSheet({ visible, onClose, onImported, onFailed }: ImportSh
       </BottomSheet>
 
       <BottomSheet
-        visible={visible && urlOpen}
+        visible={visible && urlOpen && duplicate === null}
         title="Von URL laden"
         onClose={() => setUrlOpen(false)}
       >
@@ -205,6 +274,11 @@ export function ImportSheet({ visible, onClose, onImported, onFailed }: ImportSh
           />
         </View>
       </BottomSheet>
+      <ContextMenu
+        visible={duplicate !== null}
+        items={duplicateItems}
+        onClose={dismissDuplicate}
+      />
     </>
   );
 }

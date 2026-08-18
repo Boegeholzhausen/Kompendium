@@ -132,6 +132,21 @@ Aus- und Einblenden der Bedienung lässt sich im Web-Bild deshalb nicht
 prüfen: der Scrollversatz eines fremden Dokuments ist von außen nicht
 lesbar.
 
+Aus demselben Grund ist die **gemerkte Leseposition** im Web-Bild nicht
+prüfbar: ohne lesbaren Scrollversatz gibt es nichts zu merken. Und weil
+`repository.web.ts` im Arbeitsspeicher läuft, fängt jeder Seitenaufruf mit dem
+Beispiel-Bestand an — ein **Neustart** lässt sich damit ebenfalls nicht
+nachstellen. Dass Leseposition und Suchverlauf ihn überdauern, ist also nur auf
+dem Gerät zu prüfen; im Browser ist nur zu sehen, dass der Verlauf leer
+startet, sich füllt und sich über „Verlauf leeren" wieder räumen lässt.
+
+**„Im Dokument suchen" ist im Web-Export nicht prüfbar.** Der Auftrag läuft
+über `injectJavaScript` der nativen WebView; in ein fremdes `iframe` lässt
+sich von außen nichts einspritzen. Im Web-Bild sind deshalb nur Menüeintrag,
+Sheet und die eingeklappte Form aus einem Suchtreffer zu sehen — die Zählung
+steht dort immer auf „Nicht im Dokument gefunden". Ob wirklich gesprungen und
+hervorgehoben wird, ist nur auf dem Gerät zu prüfen.
+
 Die Abnahmeblätter liegen unter `src/dev/` und sind über **Einstellungen >
 Abnahmeblätter** erreichbar: **Tokens** (`1a`), **Kacheln** (`1b`),
 **Komponenten** (`2a`).
@@ -174,6 +189,12 @@ Erstbefüllung haben keine Datei und bekommen den erzeugten Beispielinhalt aus
 `src/data/sampleDocumentHtml.ts`. Die Suche (`src/data/search.ts`) läuft über
 Titel, Ordner, Tags und den Volltext aus beiden Quellen; der Index wird nach
 dem Start einmal warmgelaufen.
+
+**Teilen** gibt die Datei weiter, nicht den Titel: `expo-sharing` bekommt den
+`file://`-Pfad aus dem Cache (`cache.documentUri`). Dokumente der Erstbefüllung
+haben keine Datei — dort bleibt es beim System-Sheet mit dem Titel, und der
+Toast sagt warum. Im Web-Export gibt es keinen Dateipfad, `documentUri` liefert
+dort immer `null`.
 
 Nach dem Laden steht ein fremdes Dokument auf **weisser** Fläche
 (`documentCanvas`), nicht auf `bg/base`. Die dunkle Bühne gibt es nur, damit
@@ -238,6 +259,123 @@ beim Laden nichts weiß aufblitzt.
   bekommen `NULL`.
 - **"Erneut versuchen"** meldet ohne Netz "Keine Verbindung" als Toast, statt
   eine Ladeanzeige zu zeigen, hinter der nichts passiert.
+- **Ordner löschen** ist im Handoff-Dokument nicht vorgesehen; ohne die Aktion
+  ist ein Ordner eine Einbahnstraße — ein versehentlich angelegter bleibt für
+  immer stehen. Die Dokumente darin werden nie mitgelöscht, sie landen in
+  "Nicht einsortiert". Der zugehörige Toast mit "Rückgängig" steht in der
+  Ordner-**Übersicht**, nicht im Detail: das Löschen schließt den Detail-Screen,
+  ein Toast dort wäre im selben Moment mit ihm weg.
+- **Externe Links im Dokument** öffnen `http`/`https` im Systembrowser
+  (`expo-linking`), statt sie wie bisher stumm zu blocken. `about:` (samt
+  Ankern für ein eigenes Inhaltsverzeichnis) läuft weiter in der WebView, alles
+  andere bleibt geblockt.
+- **Der Papierkorb räumt beim Start auf:** alles, was länger als 30 Tage darin
+  liegt, wird endgültig gelöscht — Datenbankzeile und Cache-Datei. Ohne den
+  Lauf stünden Zeilen dauerhaft auf "0 Tage übrig" und widersprächen dem
+  Hinweisstreifen aus Blatt `6a`.
+- **Der Suchverlauf startet leer.** Blatt `3c` zeigt "annuität",
+  "kündigungsfrist" und "cloud" unter "Zuletzt gesucht" — das ist eine
+  Beschriftung der Zeichnung, keine Nutzung. Eine App, die beim ersten Start
+  eine Suchvergangenheit behauptet, die es nicht gibt, macht eine
+  Falschaussage. Ergänzt ist deshalb ein "Verlauf leeren" unter der Chip-Reihe:
+  ein Verlauf, den man nicht loswird, gehört dem Nutzer nicht.
+- **Leseposition und Suchverlauf überdauern den Neustart.** Beide liegen als
+  JSON in der vorhandenen `settings`-Tabelle — kein Schemawechsel. Die
+  Leseposition wird beim Lesen gedrosselt geschrieben (frühestens alle zwei
+  Sekunden) und in jedem Fall beim Verlassen des Viewers: der Scroll-Rückruf
+  feuert ab 8 px Unterschied, eine Datenbankschreibung je Schritt wäre beim
+  Lesen spürbar. Einträge zu Dokumenten, die es nicht mehr gibt, fallen beim
+  Start und beim endgültigen Löschen weg.
+- **Die Filter-Chips zählen die echte Tag-Nutzung.** Blatt `1c` zeigt zwei
+  feste Tags; bis Paket C standen sie als `topFilterTagIds` in
+  `sampleLibrary.ts` und waren damit Laufzeitbestand aus der Erstbefüllung —
+  ein Verstoß gegen die harte Regel. Gezeigt werden jetzt die drei
+  häufigsten Tags über alle nicht gelöschten Dokumente (bei Gleichstand nach
+  Name); ein Tag ohne Dokument erscheint nicht. Ist der aktive Filter nicht
+  unter den drei, hängt er zusätzlich an: ein Chip, der verschwindet, während
+  seine Einschränkung weiterwirkt, wäre nicht erklärbar.
+- **Vierte Sortierung "Zuletzt geöffnet".** Das Handoff-Dokument führt drei;
+  die Spalte `last_opened_at` gibt es seit Schema-Version 2, sie wurde aber
+  nirgends zum Sortieren benutzt. Für die häufigste Aufgabe (wiederfinden) ist
+  sie die nützlichste Reihenfolge. Nie geöffnete Dokumente stehen hinten, bei
+  Gleichstand entscheidet `updated_at`. Das Segment in "Darstellung" trägt
+  deshalb vier Kurzformen ("Zuletzt", "Titel", "Größe", "Geöffnet").
+- **"Zuletzt geöffnet" im Info-Sheet.** Der Viewer zählt beim Öffnen hoch,
+  bevor das Sheet aufgeht — angezeigt wird deshalb der gemerkte Zeitpunkt des
+  Besuchs davor, sonst stünde dort immer "gerade eben". Ohne einen solchen
+  Besuch: "noch nie".
+- **Ordner-Detail als Aufräum-Screen:** Blatt `3b` zeigt weder Auswahlmodus
+  noch FAB noch eine Sortier-Schaltfläche, und die Sektionsüberschrift steht
+  fest auf "Zuletzt geändert". Aufgeräumt wird aber genau dort; ohne diese
+  Ergänzungen ist der Ordner der einzige Listen-Screen, in dem man nichts tun
+  kann. Kontextmenü, Verschieben-Sheet, Tag-Sheet und Toast kommen aus einem
+  gemeinsamen Modul (`screens/library/documentActions.tsx`), das sich
+  Bibliothek und Ordner-Detail teilen. Die Auswahl-Aktionsleiste ersetzt dort
+  keine Tab-Bar (der Screen liegt darüber), sondern schwebt über dem unteren
+  Rand, und ihre Wünsche führt der Screen selbst aus statt über `request` —
+  zwei Zuhörer auf demselben Wunsch führten ihn doppelt aus. Ein Import aus
+  einem Ordner heraus landet in diesem Ordner; "Alle Dokumente" hat keinen,
+  dort gilt weiter "landet in Neu".
+
+- **Suche über mehrere Begriffe.** Das Handoff-Dokument beschreibt eine
+  Teilzeichenketten-Suche über einen Begriff. Damit fand "annuität rechner"
+  nichts, obwohl beide Wörter im Dokument stehen. Die Abfrage wird jetzt an
+  Leerzeichen zerlegt (UND über die Begriffe, jeder für sich in Titel, Ordner,
+  Tag oder Text); was in Anführungszeichen steht, bleibt eine Wortgruppe.
+- **Umlaute: Akzente entfernen, keine ae-Umschrift.** Gesucht wird in einer
+  gefalteten Fassung — kleingeschrieben, `ß→ss`, danach NFD ohne
+  Kombinationszeichen. "annuitat" findet damit "Annuität" und "Muller" findet
+  "Müller". Die im Konzept erwogene deutsche Umschrift (`ä→ae`) hätte genau
+  diese beiden Fälle gebrochen ("Annuität" wäre zu "annuitaet" geworden);
+  sie ist deshalb bewusst **nicht** umgesetzt. "Mueller" findet "Müller"
+  folglich nicht. Die Fundstelle wird über eine zeichenweise Abbildung auf den
+  Originaltext zurückgerechnet und bleibt exakt, auch hinter einem ß.
+- **"Im Dokument suchen" im Viewer.** Kein Blatt sieht es vor; bei einem
+  40-Seiten-Nachschlagewerk ist es die naheliegendste Erwartung. Der Eintrag
+  steht im Überlaufmenü über "Umbenennen", die Eingabe läuft in der Form des
+  URL-Sheets aus `ImportSheet`. `react-native-webview` 13.16.1 hat keine
+  Suchschnittstelle (weder `findInPage` noch `findAll`), deshalb
+  `injectJavaScript` mit `window.find(...)`: die Hervorhebung ist die Auswahl,
+  die die WebView selbst zeichnet — kein eingespritztes Stylesheet im fremden
+  Dokument. Die Zählung ("3 / 17") entsteht aus `innerText`.
+- **Treffer springt zur Fundstelle.** Die Trefferzeile öffnet
+  `/dokument/<id>?suche=<begriff>`; der Viewer sucht den Begriff nach dem Laden
+  einmal und zeigt das Suchen-Sheet eingeklappt, damit erkennbar ist, warum das
+  Dokument nicht oben steht. Der Suchbegriff gewinnt dabei gegen die gemerkte
+  Leseposition — die bleibt gespeichert und gilt beim nächsten Öffnen ohne
+  Begriff wieder.
+- **`CaretUp` im Icon-Register.** Weiter/Zurück durch die Fundstellen brauchen
+  ein Gegenstück zu `CaretDown`; das Handoff-Dokument führt nur die
+  Abwärtsform, weil es die Aufwärtsbewegung nirgends gab.
+
+- **Info-Sheet schreibt gedrosselt.** Titel und Notiz haben einen eigenen
+  Zustand im Sheet; nach außen gemeldet wird frühestens alle 600 ms und in
+  jedem Fall bei `onBlur` und beim Schließen. Vorher ging jeder Buchstabe in
+  die Datenbank und setzte `updated_at` — der Titel wanderte beim Tippen live
+  in "Zuletzt geändert" nach oben. `setTitle`/`setNote` schreiben zusätzlich
+  nur noch, wenn sich der Wert wirklich unterscheidet: sonst rückt ein
+  Dokument nach vorn, ohne dass jemand etwas geändert hat.
+- **"Alle auswählen" in der Auswahl-Kopfzeile.** Blatt `3h` zeigt nur
+  "Abbrechen"; bei einigen hundert Dokumenten ist Aufräumen ohne Sammelgriff
+  Zeile für Zeile Handarbeit. Der Griff wirkt auf die gerade sichtbare,
+  gefilterte und sortierte Liste (in der Bibliothek einschließlich der Sektion
+  "Neu"), nie auf den ganzen Bestand — ein Tipp bei aktivem Favoriten-Filter
+  darf nichts auswählen, was niemand sieht. Ist alles gewählt, heißt der
+  Button "Auswahl aufheben". Dieselbe Kopfzeile benutzt das Ordner-Detail.
+- **Duplikat-Rückfrage beim Import.** Dieselbe Datei zweimal zu importieren
+  ergab bisher stumm zwei Einträge. Erkannt wird ein Duplikat an gleichem
+  Titel **und** gleicher Größe in Bytes, nicht über eine Prüfsumme: ein
+  Hashlauf über ein paar hundert Kilobyte bei jedem Import wäre spürbar, und
+  für eine Rückfrage genügt das Paar. Gefragt wird im Kontextmenü-Muster wie
+  bei "Papierkorb leeren" — Hinweiszeile mit dem Titel des vorhandenen
+  Dokuments, darunter "Trotzdem importieren". "Abbrechen" schließt ohne
+  Meldung und wirft die schon geschriebene Datei wieder weg.
+- **Suchfeld im Ordner-Detail.** Aus einem Ordner heraus führte der Weg zur
+  Suche nur über die Bibliothek, und der Ordnerfilter musste von Hand gesetzt
+  werden. Das Feld über der Sektionsüberschrift ist wie in der Bibliothek nur
+  eine Schaltfläche; es setzt den Ordnerfilter vorab und schiebt die Suche
+  auf. Der Chip nennt den Ordnernamen und bleibt mit einem Tipp abwählbar.
+  "Alle Dokumente" setzt keinen Filter.
 
 Design-Abweichungen je Screen (z. B. gestrichene Sektion "Zuletzt geöffnet",
 Beschriftungen im Aktionsbalken, ergänztes "Dokumente abdunkeln", ergänztes
@@ -250,6 +388,6 @@ Beschriftungen im Aktionsbalken, ergänztes "Dokumente abdunkeln", ergänztes
   den Zustandsverlauf nur vor.
 - Unter iOS wirkt die Textgröße nicht: `textZoom` ist Android-only.
 - Aus dem ursprünglichen Lösungskonzept noch nicht umgesetzt: Push-Sync
-  (Outbox), Teilen, PDF-Export, Share-Sheet-Empfang, Hintergrund-Sync,
+  (Outbox), PDF-Export, Share-Sheet-Empfang, Hintergrund-Sync,
   eigenes App-Icon (die letzten drei brauchen einen Dev Build statt Expo Go,
   siehe [TECH_STACK.md](TECH_STACK.md)).

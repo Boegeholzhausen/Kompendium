@@ -20,6 +20,14 @@ export async function readDocument(key: string): Promise<string | null> {
   return store.get(key) ?? null;
 }
 
+/**
+ * Im Browser gibt es keinen Dateipfad, den ein System-Sheet oeffnen koennte —
+ * das Teilen faellt im Web-Bild deshalb auf den Titel zurueck.
+ */
+export function documentUri(_key: string): string | null {
+  return null;
+}
+
 export async function deleteDocument(key: string): Promise<void> {
   store.delete(key);
 }

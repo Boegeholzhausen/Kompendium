@@ -355,7 +355,9 @@ Referenz-ID = Anker im HTML-Prototyp `Kompendium.dc.html`.
 - Suchfeld, Abstand 16 nach oben. Tippen navigiert auf den Suchscreen (kein
   Inline-Fokus).
 - Filter-Chip-Zeile, horizontal scrollbar, `gap 8`: „Alle" (aktiv) ·
-  „★ Favoriten" (mit `star` 16) · die meistgenutzten Tags mit Farbpunkt.
+  „★ Favoriten" (mit `star` 16) · die drei meistgenutzten Tags mit Farbpunkt,
+  gezählt über den echten Bestand (siehe README). Ist der aktive Filter ein
+  Tag außerhalb der drei, hängt er zusätzlich hinten an.
 - **Sektion „Neu"** — eigener Rahmen: `accent/surface`, 1 px
   `accent/border`, `radius md`, Innenabstand 12. Kopf: `overline` in
   `accent` + Anzahl-Badge Mint + „Einsortieren" als Mint-Textbutton (wählt
@@ -427,8 +429,29 @@ Mint-Button für „Offline laden" hätte mehr Gewicht als die Sache verdient.
 Offline gehaltene Dokumente zeigen es in der Metazeile mit `cloud-check` in
 `accent` + „offline", nie durch Farbe allein.
 
-Dann Sektionskopf „Zuletzt geändert" mit Ansichtsumschalter rechts und
-dieselbe Liste wie in der Bibliothek.
+Ergänzt (siehe README): darunter ein Suchfeld in der Form der Bibliothek —
+nicht bedienbar, ein Tipp schiebt die Suche auf und setzt vorher den
+Ordnerfilter. Der Filter-Chip in der Suche nennt dann den Ordnernamen und
+bleibt abwählbar; „Alle Dokumente" setzt keinen Filter.
+
+Dann der Sektionskopf mit der Bezeichnung der geltenden Sortierung („Zuletzt
+geändert", „Titel", „Größe" oder „Zuletzt geöffnet") und rechts zwei
+Schaltflächen: Ansichtsumschalter und `arrows-down-up`, das dasselbe
+Sortier-Sheet öffnet wie in der Bibliothek. Darunter dieselbe Liste.
+
+Ergänzt (siehe README): langer Druck auf eine Zeile öffnet dasselbe
+Kontextmenü wie in der Bibliothek (Auswählen · Verschieben · Taggen · Favorit ·
+Papierkorb). Im Auswahlmodus liegt die Auswahl-Kopfzeile über der 56-px-Zeile,
+und die Auswahl-Aktionsleiste (Komponente 17) schwebt über dem unteren Rand —
+hier gibt es keine Tab-Bar, die sie ersetzen könnte. Sonst steht dort ein FAB
+„Dokument importieren"; ein Import aus einem Ordner heraus landet in diesem
+Ordner, „Alle Dokumente" behält den Weg über „Neu".
+
+Das Überlauf-Menü führt drei Einträge: „Ordner umbenennen", „Inhalt offline
+behalten" und — ergänzt, siehe README — **„Ordner löschen"** mit `trash` in
+`danger`. Gelöscht wird nur der Ordner; seine Dokumente landen in „Nicht
+einsortiert". Danach schließt der Screen, und der Toast mit „Rückgängig" steht
+in der Ordner-**Übersicht**, weil dieser Screen im selben Moment weg ist.
 
 ### 5 · Viewer — Bedienung eingeblendet (`2b`)
 
@@ -460,6 +483,38 @@ dunkler Streifen auf hellem Papier. Web-Export: `react-native-webview` hat
 keine Web-Umsetzung, deshalb `src/screens/viewer/DocumentView.web.tsx` mit
 einem `iframe`; Chrome-Autohide ist im Web-Bild folglich nicht prüfbar.
 
+**Teilen** gibt die Datei aus dem Cache weiter (`expo-sharing`), nicht den
+Titel. Dokumente der Erstbefüllung haben keine Datei — dort öffnet weiter das
+System-Sheet mit dem Titel, und der Toast sagt warum. **Links im Dokument**
+gehen bei `http`/`https` in den Systembrowser; das Dokument bleibt stehen, wo
+es steht. Schlägt das fehl, meldet es derselbe Toast — beides ohne
+„Rückgängig", denn es gibt nichts zurückzunehmen.
+
+**Überlaufmenü:** „Im Dokument suchen" (`magnifying-glass`) · „Umbenennen" ·
+„Verschieben" · „Informationen" · Trenner · „In den Papierkorb"
+(destruktiv). Der erste Eintrag ist eine Abweichung — kein Blatt sieht ihn
+vor, aber bei einem 40-Seiten-Nachschlagewerk ist die Suche im geöffneten
+Dokument die naheliegendste Erwartung.
+
+**Suchen-Sheet** (`FindSheet`, Ebene über dem Dokument): dieselbe Form wie
+das URL-Sheet aus dem Import — Titelzeile „Im Dokument suchen", fokussiertes
+Feld mit 2 px `accent/border`, darunter eine Statuszeile mit der Zählung
+„3 / 17" in Tabellenziffern und zwei 48er Icon-Buttons (`caret-up`,
+`caret-down`) für Zurück und Weiter. Ohne Fundstelle steht dort „Nicht im
+Dokument gefunden" — im Sheet selbst, nicht als Toast: die Antwort gehört zur
+Eingabe, die noch dasteht. Das Sheet bleibt beim Blättern offen; Schließen
+hebt die Hervorhebung auf.
+
+Kommt der Viewer aus einem Suchtreffer (`/dokument/<id>?suche=…`), steht das
+Sheet **eingeklappt** da: nur Zählung, Weiter/Zurück und der Textbutton
+„Suchbegriff ändern". So ist erkennbar, warum das Dokument nicht oben
+beginnt. Der Begriff gewinnt in diesem Fall gegen die gemerkte Leseposition;
+gespeichert bleibt sie trotzdem.
+
+Hervorgehoben wird die Fundstelle, die die WebView selbst zeichnet (Auswahl
+über `window.find`) — kein eingespritztes Stylesheet, dieselbe Regel wie bei
+der Textgröße.
+
 ### 6 · Viewer — reiner Lesemodus (`2c`)
 
 Kopfzeile und Aktionsbalken verschwinden **vollständig**, nicht
@@ -475,7 +530,8 @@ in ein separates Umbenennen-Sheet, Umbenennen ist die häufigste Änderung),
 **Ordner** (Zeile mit farbigem `folder` + `caret-right`), **Tags** (Chips
 mit `x` + „+ Tag"-Chip), **Notiz** (Feld, min. 56, Platzhalter „Notiz
 hinzufügen"), **Schalter „Offline behalten"** mit Untertitel „240 KB im
-Cache", **Metadaten** (Importiert am, Größe, Geöffnet 12×, Quelle) als
+Cache", **Metadaten** (Importiert am, Größe, Geöffnet 12×, Zuletzt geöffnet,
+Quelle) als
 Label-Wert-Paare `label`, Werte in `text/primary`.
 
 „In den Papierkorb" sitzt in `danger` (Icon + Text) hinter einer eigenen
@@ -485,6 +541,12 @@ unter dem Daumen auftauchen, während man Tags setzt.
 Schalter (Komponente `Switch`): 48 × 28, `radius pill`; an `accent` mit
 Knopf `on-accent`, aus `border/strong` mit Knopf `text/secondary`; Knopf
 22 × 22, Innenabstand 3.
+
+**Umsetzung:** Titel und Notiz führen einen eigenen Zustand im Sheet und
+melden gedrosselt nach außen (frühestens alle 600 ms, in jedem Fall beim
+Verlassen des Feldes und beim Schließen) — sonst ging jeder Buchstabe in die
+Datenbank und der Titel wanderte beim Tippen live in „Zuletzt geändert" nach
+oben (siehe README).
 
 **Umsetzung:** Info- und Tag-Sheet sind **keine** Modals, sondern absolute
 Ebenen im Viewer (`SheetLayer` in `ui/BottomSheet.tsx`) — das Tag-Sheet
@@ -499,7 +561,14 @@ Navigationsleiste darunter wäre nur verdeckte Fläche.
 
 Zurück-Pfeil + fokussiertes Suchfeld in einer Zeile. Darunter Sektion
 „Zuletzt gesucht" — Chips Höhe 40 mit `clock-counter-clockwise` 16 + Begriff
-in `body`; dann „Nach Tag suchen" mit Tag-Chips.
+in `body`, darunter der Textbutton „Verlauf leeren" (kompakt, linksbündig);
+dann „Nach Tag suchen" mit Tag-Chips.
+
+Der Verlauf ist echte Nutzung und überdauert den Neustart; er startet leer.
+Die Sektion samt „Verlauf leeren" entfällt deshalb beim ersten Start
+vollständig — der Screen beginnt dann direkt mit „Nach Tag suchen". Die drei
+Begriffe der Zeichnung („annuität", „kündigungsfrist", „cloud") sind
+Beispielbeschriftung, kein Startbestand.
 
 Tastatur: `bg/raised` mit 1 px `border/subtle` oben, Vorschlagszeile 36
 (mittlerer Vorschlag in `text/primary`, Trenner 1 × 16 `border/strong`),
@@ -529,6 +598,17 @@ im Feld.
 Dokumenttext, damit die Trefferzeile einen echten Textausschnitt zeigen
 kann.
 
+Die Abfrage darf **mehrere Begriffe** tragen: an Leerzeichen zerlegt, alle
+müssen zutreffen, jeder für sich in Titel, Ordner, Tag oder Text. Was in
+Anführungszeichen steht, bleibt eine Wortgruppe. Umlaute werden gefaltet
+(`ß→ss`, danach Akzente entfernt), „annuitat" findet also „Annuität" — die
+Hervorhebung liegt trotzdem exakt auf dem Originalwort, weil die Faltung eine
+zeichenweise Abbildung mitführt. Die Rangfolge bleibt Titel vor Tag/Ordner
+vor reinem Text; bei mehreren Begriffen zählt der beste erreichte Rang.
+
+Ein Tipp auf die Trefferzeile öffnet `/dokument/<id>?suche=<begriff>`: der
+Viewer springt zur ersten Fundstelle, statt oben zu beginnen (siehe Screen 5).
+
 ### 10 · Suche — nichts gefunden (`3e`)
 
 Aktive Filter bleiben oben sichtbar. Zentriert: Fläche 88 × 88
@@ -541,6 +621,11 @@ zurücksetzen".
 Die Leerdarstellung nennt Ursache und Trefferzahl ohne Filter — „Nichts
 gefunden" allein lässt offen, ob das Dokument fehlt oder der Filter zu eng
 ist.
+
+Bei **mehreren Begriffen** steht darunter ein zweiter Satz in derselben
+Schrift: „„annuität" allein: 12 Treffer". Er beantwortet die Frage, die sich
+sonst stellt — welches Wort war zu viel? Nur dieser eine Zusatz, keine eigene
+Fläche.
 
 ### 11 · Tag-Verwaltung (`3f`)
 
@@ -575,13 +660,21 @@ Wege, eine Vorauswahl wäre geraten. Mint trägt nur das Icon. Fußnote:
 **Umsetzung:** Die drei Wege wirken vollständig (`expo-document-picker`,
 `expo-clipboard`, `fetch` mit eigenem Eingabe-Sheet für die URL). Der
 Prototyp endet bei der Auswahlfläche, das URL-Eingabe-Sheet ist eine eigene
-Ergänzung aus vorhandenen Teilen.
+Ergänzung aus vorhandenen Teilen. Ergänzt ist außerdem eine Rückfrage bei
+einem Duplikat (gleicher Titel und gleiche Größe in Bytes): im
+Kontextmenü-Muster wie „Papierkorb leeren", oben die Hinweiszeile mit dem
+Titel des vorhandenen Dokuments (`warning-circle`, nicht bedienbar), darunter
+„Trotzdem importieren". Abbrechen schließt ohne Meldung (siehe README).
 
 ### 13 · Mehrfachauswahl (`3h`)
 
 Header wird zu `bg/surface` mit 1 px `border/subtle` unten: „3 ausgewählt"
-als `title` mit Tabellenziffern, „Abbrechen" als Mint-Textbutton. Zeilen mit
-Mint-Checkbox 24 × 24 links (`radius xs`); ausgewählte Zeilen
+als `title` mit Tabellenziffern, rechts zwei Mint-Textbuttons — ergänzt (siehe
+README) „Alle auswählen" (bzw. „Auswahl aufheben", sobald alles gewählt ist)
+und daneben „Abbrechen". Der Sammelgriff wirkt nur auf die gerade sichtbare,
+gefilterte Liste.
+
+Zeilen mit Mint-Checkbox 24 × 24 links (`radius xs`); ausgewählte Zeilen
 `accent/surface` + `accent/border`. **Nicht** gewählte Zeilen behalten ein
 leeres Kästchen (2 px `border/strong`), damit erkennbar bleibt, dass sie
 auswählbar sind. Tab-Bar wird durch die Auswahl-Aktionsleiste ersetzt; der
@@ -590,7 +683,9 @@ FAB verschwindet, weil Importieren hier keine sinnvolle Aktion ist.
 **Umsetzung:** Die Auswahl-Aktionsleiste lebt im Tab-Rahmen
 (`app/(tabs)/_layout.tsx`), die Sheets und der Toast aber in der
 Bibliothek; verbunden über `request` im Bibliothek-Zustand — die Leiste legt
-einen Wunsch ab, die Bibliothek führt ihn aus und räumt ihn weg.
+einen Wunsch ab, die Bibliothek führt ihn aus und räumt ihn weg. Die
+sichtbaren Ausweise für „Alle auswählen" gibt der Screen von außen in die
+Kopfzeile; dieselbe Kopfzeile benutzt das Ordner-Detail.
 
 ### 14 · Einstellungen (`3i`)
 
@@ -641,7 +736,8 @@ Erreichbar aus Einstellungen. Drei Gruppen:
 
 - **Bibliothek** — „Standardansicht" als Zweier-Segment (Liste/Kacheln,
   Höhe 44, `radius sm`; aktiv `accent/surface` + `accent/border` +
-  `fill`-Icon), darunter „Sortierung" als Dreier-Segment
+  `fill`-Icon), darunter „Sortierung" als Vierer-Segment („Zuletzt", „Titel",
+  „Größe", „Geöffnet")
   (Zuletzt/Titel/Größe).
 - **Lesen** — „Textgröße im Viewer" mit Wert 110 % rechts, Regler (Spur 4
   px `bg/raised`, Füllung `accent`, Knopf 24 mit 3 px `bg/surface`-Ring),

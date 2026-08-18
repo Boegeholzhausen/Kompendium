@@ -25,12 +25,13 @@ import { useFolderStore, type LibraryFolder } from '../../state/folders';
 import { bg, border, iconSize, radius, size, space, text as textColor } from '../../theme';
 import { ChoiceSheet } from '../../ui/ChoiceSheet';
 import { CreateFolderTile, FolderTile } from '../../ui/FolderTile';
-import { ArrowsDownUp, Books, CaretRight } from '../../ui/icons';
+import { ArrowsDownUp, Books, CaretRight, Folder } from '../../ui/icons';
 import { IconButton } from '../../ui/IconButton';
 import { PressableScale } from '../../ui/press';
 import { TitleHeader } from '../../ui/ScreenHeader';
 import { SyncIndicator } from '../../ui/SyncIndicator';
 import { Text } from '../../ui/Text';
+import { Toast } from '../../ui/Toast';
 import { CreateFolderSheet } from './CreateFolderSheet';
 
 type FolderSort = 'name' | 'count';
@@ -56,6 +57,9 @@ export function FoldersScreen() {
   const folders = useFolderStore((state) => state.folders);
   const documents = useDocumentStore((state) => state.documents);
   const syncStatus = useSyncStore((state) => state.status);
+  /** "Ordner geloescht" aus dem Detail-Screen — siehe `PendingUndo`. */
+  const pendingUndo = useFolderStore((state) => state.pendingUndo);
+  const setPendingUndo = useFolderStore((state) => state.setPendingUndo);
 
   const [sort, setSort] = useState<FolderSort>('name');
   const [sortOpen, setSortOpen] = useState(false);
@@ -181,6 +185,19 @@ export function FoldersScreen() {
       />
 
       <CreateFolderSheet visible={createOpen} onClose={() => setCreateOpen(false)} />
+
+      <Toast
+        visible={pendingUndo !== null}
+        message={pendingUndo?.message ?? ''}
+        icon={Folder}
+        actionLabel="Rückgängig"
+        onAction={() => {
+          pendingUndo?.undo();
+          setPendingUndo(null);
+        }}
+        onHide={() => setPendingUndo(null)}
+        style={{ bottom: insets.bottom + size.screenPadding }}
+      />
     </View>
   );
 }

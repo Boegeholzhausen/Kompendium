@@ -12,33 +12,73 @@
  * waere die schlechtere Antwort auf einen Fehler, den der Nutzer nicht
  * beheben kann.
  */
-import { loadSnapshot } from '../data/db/repository';
+import { TRASH_DAYS, type StoredDocument } from '../data/library';
+import { expiredTrashIds, loadSnapshot } from '../data/db/repository';
 import { warmSearchIndex } from '../data/search';
 import { useAppearanceStore } from './appearance';
-import { useDocumentStore } from './documents';
+import { purgeDocuments, useDocumentStore } from './documents';
 import { useFolderStore } from './folders';
 import { useLibraryStore } from './library';
+import { useSearchStore } from './search';
 import { useSyncStore } from './sync';
+import { useViewerStore } from './viewer';
 
 let running: Promise<void> | null = null;
+
+const DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * Die 30-Tage-Zusage des Papierkorbs (Blatt `6a`) einloesen.
+ *
+ * Ohne diesen Lauf bliebe jede geloeschte Zeile fuer immer stehen — mit "0 Tage
+ * uebrig" in der Meta-Zeile, also einem sichtbar gebrochenen Versprechen. Er
+ * laeuft VOR dem Verteilen des Snapshots und raeumt die abgelaufenen Zeilen
+ * auch aus ihm heraus, damit der Nutzer nie eine Zeile sieht, die eigentlich
+ * schon weg ist.
+ *
+ * Faellt er aus, startet die App trotzdem: ein nicht geleerter Papierkorb ist
+ * kein Grund, die Bibliothek nicht zu zeigen.
+ */
+async function purgeExpiredTrash(documents: StoredDocument[]): Promise<StoredDocument[]> {
+  try {
+    const expired = await expiredTrashIds(Date.now() - TRASH_DAYS * DAY);
+    if (expired.length === 0) return documents;
+
+    await purgeDocuments(expired);
+    const gone = new Set(expired.map((entry) => entry.id));
+    return documents.filter((document) => !gone.has(document.id));
+  } catch (error: unknown) {
+    console.warn('[kompendium] Papierkorb liess sich nicht aufraeumen:', error);
+    return documents;
+  }
+}
 
 export function hydrateStores(): Promise<void> {
   if (running === null) {
     running = (async () => {
       try {
         const snapshot = await loadSnapshot();
-        useDocumentStore.getState().hydrate(snapshot.documents, snapshot.tags);
+        const documents = await purgeExpiredTrash(snapshot.documents);
+        useDocumentStore.getState().hydrate(documents, snapshot.tags);
         useFolderStore.getState().hydrate(snapshot.folders);
         useLibraryStore.getState().hydrate(snapshot.settings);
         useAppearanceStore.getState().hydrate(snapshot.settings);
+        useSearchStore.getState().hydrate(snapshot.settings);
+        // Die Lesepositionen kommen NACH dem Aufraeumen des Papierkorbs an die
+        // Reihe: nur so laesst sich verwerfen, was zu einem Dokument gehoert,
+        // das es nicht mehr gibt.
+        useViewerStore.getState().hydrate(
+          snapshot.settings,
+          documents.map((document) => document.id)
+        );
         // Der Sync-Zustand startet auf `pending` — offene Aenderungen der
         // letzten Sitzung. Auf einer leeren Bibliothek waere das eine
         // Falschaussage: es gibt nichts, was offen sein koennte, und die
         // gelbe Leiste stuende ausgerechnet auf dem Erststart-Screen.
-        if (snapshot.documents.length === 0) useSyncStore.getState().setStatus('idle');
+        if (documents.length === 0) useSyncStore.getState().setStatus('idle');
         // Der Suchindex laeuft im Hintergrund warm: der erste Screen soll
         // nicht auf Dateien warten, die erst beim Suchen gebraucht werden.
-        void warmSearchIndex(snapshot.documents);
+        void warmSearchIndex(documents);
       } catch (error: unknown) {
         console.warn('[kompendium] Datenbank liess sich nicht lesen:', error);
         useDocumentStore.getState().hydrate([], []);

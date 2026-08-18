@@ -23,6 +23,9 @@ export { ArrowRightIcon as ArrowRight } from 'phosphor-react-native/src/icons/Ar
 export { ArrowUpIcon as ArrowUp } from 'phosphor-react-native/src/icons/ArrowUp';
 export { CaretRightIcon as CaretRight } from 'phosphor-react-native/src/icons/CaretRight';
 export { CaretDownIcon as CaretDown } from 'phosphor-react-native/src/icons/CaretDown';
+// Weiter/Zurueck durch die Fundstellen im Viewer (D2) — die einzige Stelle,
+// an der es nach oben und nach unten in derselben Zeile geht.
+export { CaretUpIcon as CaretUp } from 'phosphor-react-native/src/icons/CaretUp';
 export { ArrowsDownUpIcon as ArrowsDownUp } from 'phosphor-react-native/src/icons/ArrowsDownUp';
 export { RowsIcon as Rows } from 'phosphor-react-native/src/icons/Rows';
 export { SquaresFourIcon as SquaresFour } from 'phosphor-react-native/src/icons/SquaresFour';
