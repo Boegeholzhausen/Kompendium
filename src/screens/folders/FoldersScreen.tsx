@@ -2,11 +2,11 @@
  * Screen 3 — Ordner-Uebersicht (Blatt `3a`).
  *
  * Aufbau von oben: Kopf "Ordner" mit Sortier-Schaltflaeche, Sync-Leiste, dann
- * "Alle Dokumente" als **volle Zeile** und darunter das 2-Spalten-Raster der
- * Ordner-Kacheln mit "Ordner anlegen" als letzter, gestrichelter Kachel.
+ * das 2-Spalten-Raster der Ordner-Kacheln mit "Ordner anlegen" als letzter,
+ * gestrichelter Kachel.
  *
- * "Alle Dokumente" steht bewusst nicht als erste Kachel im Raster: es ist kein
- * Ordner und soll auch nicht wie einer aussehen.
+ * Eine Zeile "Alle Dokumente" gibt es hier bewusst nicht mehr: der
+ * Bibliothek-Tab zeigt bereits alle Dokumente.
  *
  * Das Raster ist von Hand in Zeilen gelegt statt ueber eine FlatList mit
  * `numColumns`: die Kacheln sind unterschiedlich hoch (ein langer Ordnername
@@ -22,15 +22,13 @@ import { useGuardedPush } from '../../navigation/useGuardedPush';
 import { useDocumentStore } from '../../state/documents';
 import { useSyncStore } from '../../state/sync';
 import { useFolderStore, type LibraryFolder } from '../../state/folders';
-import { bg, border, iconSize, radius, size, space, text as textColor } from '../../theme';
+import { bg, size, space } from '../../theme';
 import { ChoiceSheet } from '../../ui/ChoiceSheet';
 import { CreateFolderTile, FolderTile } from '../../ui/FolderTile';
-import { ArrowsDownUp, Books, CaretRight, Folder } from '../../ui/icons';
+import { ArrowsDownUp, Folder } from '../../ui/icons';
 import { IconButton } from '../../ui/IconButton';
-import { PressableScale } from '../../ui/press';
 import { TitleHeader } from '../../ui/ScreenHeader';
 import { SyncIndicator } from '../../ui/SyncIndicator';
-import { Text } from '../../ui/Text';
 import { Toast } from '../../ui/Toast';
 import { CreateFolderSheet } from './CreateFolderSheet';
 
@@ -77,11 +75,6 @@ export function FoldersScreen() {
     return result;
   }, [documents]);
 
-  const allCount = useMemo(
-    () => documents.filter((document) => document.trashedAt === null).length,
-    [documents]
-  );
-
   const sorted = useMemo(() => {
     const list = [...folders];
     if (sort === 'count') {
@@ -98,10 +91,11 @@ export function FoldersScreen() {
 
   /**
    * Die gestrichelte Kachel haengt hinten an der Liste und teilt sich die
-   * Zeile mit dem letzten Ordner. Deshalb wandert sie als Platzhalter durch
-   * dieselbe Paar-Bildung.
+   * Zeile mit dem letzten Ordner. Deshalb wandert sie als Marker `'create'`
+   * durch dieselbe Paar-Bildung — das `null` aus `inPairs` bleibt damit
+   * eindeutig das blosse Auffuellen einer halben Zeile.
    */
-  const tiles: (LibraryFolder | null)[] = [...sorted, null];
+  const tiles: (LibraryFolder | 'create' | null)[] = [...sorted, 'create'];
   const rows = inPairs(tiles);
 
   return (
@@ -127,36 +121,20 @@ export function FoldersScreen() {
         ]}
         showsVerticalScrollIndicator={false}
       >
-        <PressableScale
-          style={styles.allRow}
-          pressedStyle={styles.allRowPressed}
-          scaleOnPress={false}
-          // Eigene Route, kein Ordner mit dem Namen "alle": ein echter Ordner
-          // duerfte sonst nie so heissen.
-          onPress={() => push('/alle-dokumente')}
-          accessibilityRole="button"
-          accessibilityLabel={`Alle Dokumente, ${allCount}`}
-        >
-          <Books size={iconSize.lg} color={textColor.secondary} weight="fill" />
-          <View style={styles.allBody}>
-            <Text variant="body">Alle Dokumente</Text>
-            <Text variant="caption" tone="secondary" numeric>
-              {allCount}
-            </Text>
-          </View>
-          <CaretRight size={18} color={textColor.tertiary} weight="regular" />
-        </PressableScale>
-
         <View style={styles.grid}>
           {rows.map((row, index) => (
             <View key={index} style={styles.row}>
               {row.map((folder, column) =>
-                folder === null ? (
+                folder === 'create' ? (
                   <CreateFolderTile
                     key={`create-${column}`}
                     style={styles.tile}
                     onPress={() => setCreateOpen(true)}
                   />
+                ) : folder === null ? (
+                  // Haelt die letzte Kachel auf halber Breite, wenn die Zeile
+                  // nur eine traegt.
+                  <View key={`spacer-${column}`} style={styles.tile} />
                 ) : (
                   <FolderTile
                     key={folder.name}
@@ -168,8 +146,6 @@ export function FoldersScreen() {
                   />
                 )
               )}
-              {/* Haelt die letzte Kachel auf halber Breite, wenn die Zeile nur eine traegt. */}
-              {row.length === 1 ? <View style={styles.tile} /> : null}
             </View>
           ))}
         </View>
@@ -209,24 +185,6 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: size.screenPadding,
-  },
-  allRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space['12'],
-    height: size.rowHeight,
-    paddingHorizontal: size.cardPadding,
-    borderRadius: radius.md,
-    backgroundColor: bg.surface,
-    borderWidth: 1,
-    borderColor: border.subtle,
-  },
-  allRowPressed: {
-    backgroundColor: bg.raised,
-    borderColor: border.strong,
-  },
-  allBody: {
-    flex: 1,
   },
   grid: {
     marginTop: space['20'],
