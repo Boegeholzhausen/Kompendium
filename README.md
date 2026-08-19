@@ -104,7 +104,6 @@ in [DATABASE_STRUCTURE.md](DATABASE_STRUCTURE.md).
 app/(tabs)/           Bibliothek, Ordner, Einstellungen
 app/dokument/[id]     Viewer als Push-Screen, ohne Tab-Bar
 app/ordner/[name]     Ordner-Detail als Push-Screen
-app/alle-dokumente    "Alle Dokumente" — kein Ordner, eigene Route
 app/suche.tsx         Suche als Push-Screen, ohne Tab-Bar
 app/papierkorb.tsx    Papierkorb, aus den Einstellungen erreichbar
 app/darstellung.tsx   Darstellung, aus den Einstellungen erreichbar
@@ -199,8 +198,8 @@ Supabase), Sync-Strategie und Import-Wege: siehe
 Sie wandern beim allerersten Start in die Datenbank und werden danach nicht
 mehr gelesen. Was in der App geändert wird, überlebt den Neustart. Die vier
 Dokumente der Sektion "Neu" sind nur am Tag des ersten Starts neu — danach
-steht die Sektion leer und die Zahl unter "Alle Dokumente" wächst von 243
-auf 247 ("Neu" heißt "seit gestern importiert").
+steht die Sektion leer und die Bibliothek zeigt 247 statt 243 Dokumente
+("Neu" heißt "seit gestern importiert").
 
 ### Import und Dateicache
 
@@ -342,8 +341,7 @@ beim Laden nichts weiß aufblitzt.
   keine Tab-Bar (der Screen liegt darüber), sondern schwebt über dem unteren
   Rand, und ihre Wünsche führt der Screen selbst aus statt über `request` —
   zwei Zuhörer auf demselben Wunsch führten ihn doppelt aus. Ein Import aus
-  einem Ordner heraus landet in diesem Ordner; "Alle Dokumente" hat keinen,
-  dort gilt weiter "landet in Neu".
+  einem Ordner heraus landet in diesem Ordner.
 
 - **Suche über mehrere Begriffe.** Das Handoff-Dokument beschreibt eine
   Teilzeichenketten-Suche über einen Begriff. Damit fand "annuität rechner"
@@ -403,8 +401,15 @@ beim Laden nichts weiß aufblitzt.
   werden. Das Feld über der Sektionsüberschrift ist wie in der Bibliothek nur
   eine Schaltfläche; es setzt den Ordnerfilter vorab und schiebt die Suche
   auf. Der Chip nennt den Ordnernamen und bleibt mit einem Tipp abwählbar.
-  "Alle Dokumente" setzt keinen Filter.
 
+- **"Alle Dokumente" ist als eigene Zeile aus der Ordner-Übersicht entfernt.**
+  Blatt `3a` zeigt sie als volle Zeile über dem Kachel-Raster mit eigener
+  Route (`app/alle-dokumente`). Die Bibliothek zeigt aber ohnehin schon alle
+  Dokumente ungefiltert — die Zeile duplizierte damit nur den Bibliothek-Tab
+  und ist samt Route ersatzlos gestrichen. `FolderDetailScreen` beherrscht
+  `folderName === null` ("alle Dokumente" ohne Filter) weiterhin, weil
+  Ordner-Detail und diese Ansicht sich den Screen teilen; erreichbar ist der
+  Pfad aktuell aber nirgends mehr in der Navigation.
 - **Tags sind ersatzlos entfallen; an ihre Stelle tritt der Workflow-Status.**
   Tags sind eine mehrwertige Klassifikation, "gelesen/ungelesen/archiviert" ein
   einwertiger Lebenszyklus — über eine Zuordnungstabelle abgebildet erlaubte
