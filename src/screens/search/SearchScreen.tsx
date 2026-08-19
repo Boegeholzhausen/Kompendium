@@ -21,13 +21,13 @@ import React, { useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-
 import {
   bestSingleTerm,
   countWithoutFilters,
   searchDocuments,
   type SearchInput,
 } from '../../data/search';
+import { useGuardedPush } from '../../navigation/useGuardedPush';
 import { useDocumentStore } from '../../state/documents';
 import { useFolderStore } from '../../state/folders';
 import {
@@ -89,6 +89,7 @@ function RecentChip({ label, onPress }: { label: string; onPress: () => void }) 
 export function SearchScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const push = useGuardedPush();
 
   const query = useSearchStore((state) => state.query);
   const submitted = useSearchStore((state) => state.submitted);
@@ -171,7 +172,7 @@ export function SearchScreen() {
    * `typedRoutes` in `app.json` die Route sonst nicht mehr kennt.
    */
   const openDocument = (id: string) =>
-    router.push({ pathname: '/dokument/[id]', params: { id, suche: submitted } });
+    push({ pathname: '/dokument/[id]', params: { id, suche: submitted } });
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>

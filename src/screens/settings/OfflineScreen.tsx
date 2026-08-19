@@ -14,7 +14,7 @@
 import React, { useMemo } from 'react';
 import { FlatList, StyleSheet, View, type ListRenderItemInfo } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useGuardedPush } from '../../navigation/useGuardedPush';
 
 import { formatBytes } from '../../data/format';
 import type { StoredDocument } from '../../data/library';
@@ -30,7 +30,7 @@ import { Text } from '../../ui/Text';
 
 export function OfflineScreen({ onBack }: { onBack: () => void }) {
   const insets = useSafeAreaInsets();
-  const router = useRouter();
+  const push = useGuardedPush();
 
   const allDocuments = useDocumentStore((state) => state.documents);
   const setKeepOffline = useDocumentStore((state) => state.setKeepOffline);
@@ -58,7 +58,7 @@ export function OfflineScreen({ onBack }: { onBack: () => void }) {
             metaIcon={CloudCheck}
             favorite={item.favorite}
             last
-            onPress={() => router.push(`/dokument/${item.id}`)}
+            onPress={() => push(`/dokument/${item.id}`)}
             onToggleFavorite={() => toggleFavorite(item.id)}
           />
         </View>

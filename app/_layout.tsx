@@ -22,6 +22,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { hydrateStores } from '../src/state/hydrate';
 import { subscribeNetwork } from '../src/state/network';
+import { useSessionStore } from '../src/state/session';
+import { useSyncStore } from '../src/state/sync';
 import { bg } from '../src/theme/colors';
 import { useAppFonts } from '../src/theme/fonts';
 
@@ -35,6 +37,18 @@ export default function RootLayout() {
   }, []);
 
   useEffect(() => subscribeNetwork(), []);
+
+  // Anmeldung und Abgleich laufen nebenher: kein Screen wartet auf sie, weil
+  // kein Screen sie braucht — die Bibliothek rendert aus der lokalen Datenbank
+  // und tauscht die Zeilen aus, wenn neue da sind. Die Reihenfolge ist
+  // trotzdem fest: ohne Identitaet gibt es keine Zeile, die dem Geraet
+  // gehoert, und damit nichts abzugleichen.
+  useEffect(() => {
+    void (async () => {
+      await useSessionStore.getState().signIn();
+      await useSyncStore.getState().sync();
+    })();
+  }, []);
 
   if (!fontsReady) {
     return <View style={{ flex: 1, backgroundColor: bg.base }} />;

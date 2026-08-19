@@ -2,6 +2,10 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true,
+    // `src/data/detect.ts` wird auch von `scripts/upload.mjs` geladen, und Node
+    // loest nur vollstaendige Dateinamen auf. Der Import dort traegt deshalb
+    // seine Endung; Metro findet die Datei genauso.
+    "allowImportingTsExtensions": true,
     "paths": {
       "@/*": ["./src/*"],
       // Laufzeit laedt die Icons einzeln ueber den Unterpfad (kleines Bundle);

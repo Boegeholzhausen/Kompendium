@@ -53,38 +53,57 @@ async function purgeExpiredTrash(documents: StoredDocument[]): Promise<StoredDoc
   }
 }
 
+/**
+ * Der Lauf selbst. `hydrateStores` fuehrt ihn genau einmal aus,
+ * `reloadStores` erzwingt ihn erneut — nach einem Abgleich, der etwas
+ * gebracht hat.
+ */
+function readAndDistribute(): Promise<void> {
+  return (async () => {
+    try {
+      const snapshot = await loadSnapshot();
+      const documents = await purgeExpiredTrash(snapshot.documents);
+      useDocumentStore.getState().hydrate(documents, snapshot.tags);
+      useFolderStore.getState().hydrate(snapshot.folders);
+      useLibraryStore.getState().hydrate(snapshot.settings);
+      useAppearanceStore.getState().hydrate(snapshot.settings);
+      useSearchStore.getState().hydrate(snapshot.settings);
+      // Die Lesepositionen kommen NACH dem Aufraeumen des Papierkorbs an die
+      // Reihe: nur so laesst sich verwerfen, was zu einem Dokument gehoert,
+      // das es nicht mehr gibt.
+      useViewerStore.getState().hydrate(
+        snapshot.settings,
+        documents.map((document) => document.id)
+      );
+      // Der Sync-Zustand startet auf `pending` — offene Aenderungen der
+      // letzten Sitzung. Auf einer leeren Bibliothek waere das eine
+      // Falschaussage: es gibt nichts, was offen sein koennte, und die
+      // gelbe Leiste stuende ausgerechnet auf dem Erststart-Screen.
+      if (documents.length === 0) useSyncStore.getState().setStatus('idle');
+      // Der Suchindex laeuft im Hintergrund warm: der erste Screen soll
+      // nicht auf Dateien warten, die erst beim Suchen gebraucht werden.
+      void warmSearchIndex(documents);
+    } catch (error: unknown) {
+      console.warn('[kompendium] Datenbank liess sich nicht lesen:', error);
+      useDocumentStore.getState().hydrate([], []);
+      useSyncStore.getState().setStatus('idle');
+    }
+  })();
+}
+
 export function hydrateStores(): Promise<void> {
-  if (running === null) {
-    running = (async () => {
-      try {
-        const snapshot = await loadSnapshot();
-        const documents = await purgeExpiredTrash(snapshot.documents);
-        useDocumentStore.getState().hydrate(documents, snapshot.tags);
-        useFolderStore.getState().hydrate(snapshot.folders);
-        useLibraryStore.getState().hydrate(snapshot.settings);
-        useAppearanceStore.getState().hydrate(snapshot.settings);
-        useSearchStore.getState().hydrate(snapshot.settings);
-        // Die Lesepositionen kommen NACH dem Aufraeumen des Papierkorbs an die
-        // Reihe: nur so laesst sich verwerfen, was zu einem Dokument gehoert,
-        // das es nicht mehr gibt.
-        useViewerStore.getState().hydrate(
-          snapshot.settings,
-          documents.map((document) => document.id)
-        );
-        // Der Sync-Zustand startet auf `pending` — offene Aenderungen der
-        // letzten Sitzung. Auf einer leeren Bibliothek waere das eine
-        // Falschaussage: es gibt nichts, was offen sein koennte, und die
-        // gelbe Leiste stuende ausgerechnet auf dem Erststart-Screen.
-        if (documents.length === 0) useSyncStore.getState().setStatus('idle');
-        // Der Suchindex laeuft im Hintergrund warm: der erste Screen soll
-        // nicht auf Dateien warten, die erst beim Suchen gebraucht werden.
-        void warmSearchIndex(documents);
-      } catch (error: unknown) {
-        console.warn('[kompendium] Datenbank liess sich nicht lesen:', error);
-        useDocumentStore.getState().hydrate([], []);
-        useSyncStore.getState().setStatus('idle');
-      }
-    })();
-  }
+  if (running === null) running = readAndDistribute();
+  return running;
+}
+
+/**
+ * Noch einmal lesen — nach einem Abgleich, der Zeilen gebracht hat.
+ *
+ * Der gemerkte Lauf wird dabei ersetzt: wer danach `hydrateStores()` ruft,
+ * soll den neuen Stand bekommen und nicht auf ein Versprechen von vorhin
+ * warten, das laengst erfuellt ist.
+ */
+export function reloadStores(): Promise<void> {
+  running = readAndDistribute();
   return running;
 }

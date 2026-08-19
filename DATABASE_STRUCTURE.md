@@ -145,12 +145,20 @@ mit dem Beispiel-Bestand.
 
 Das Lösungskonzept sah zusätzlich lokale Tabellen `cache_entries` (Datei-
 Cache-Status mit LRU/Pins), `outbox` (Push-Warteschlange) und `sync_state`
-(Sync-Wasserzeichen) sowie eine `documents_fts`-Volltextsuche vor. Im
-aktuellen Schema sind diese noch nicht als eigene Tabellen umgesetzt — der
+(Sync-Wasserzeichen) sowie eine `documents_fts`-Volltextsuche vor. `sync_state`
+gibt es seit Schemaversion 3 (Wasserzeichen `last_pulled_at` und die Marke
+`reset_done`); `cache_entries` und `outbox` sind weiterhin offen — der
 Dateicache läuft über `src/data/cache.ts`/`persist.ts`, die Suche über
-`src/data/search.ts`, und `settings` deckt bislang ab, was `sync_state`
-abdecken sollte. Die Outbox-Warteschlange für den echten Push-Sync ist noch
-offen (siehe [README.md](README.md), „Noch offen").
+`src/data/search.ts`. Die Outbox-Warteschlange für den Push-Sync ist der
+nächste Schritt (siehe unten).
+
+Zwei Spalten sind gegenüber dem Konzept dazugekommen. Lokal tragen
+`documents.storage_path` und `documents.content_hash` den Stand von oben mit,
+damit der Viewer eine Datei nachladen kann und erkennt, wann die gecachte
+veraltet ist; `folders.remote_id` hält die Zuordnung zwischen dem lokalen
+Ausweis (dem **Namen**) und dem oberen (einer UUID). Oben trägt
+`documents.source_path` den Pfad der Datei im HTML-Ordner am PC — daran
+erkennt `scripts/upload.mjs` beim zweiten Lauf dieselbe Datei wieder.
 
 ---
 
@@ -158,6 +166,12 @@ offen (siehe [README.md](README.md), „Noch offen").
 
 Bewusst simpel gehalten für einen Einzelnutzer mit zwei Geräten, kein Team
 mit Merge-Konflikten.
+
+**Stand:** Pull ist gebaut (`src/data/remote/pull.ts`, angestoßen beim Start
+und über „Jetzt synchronisieren"), das Nachladen der Dateien ebenfalls
+(`src/data/remote/download.ts`). Push fehlt noch — lokale Änderungen stehen in
+SQLite und noch nicht oben; der Sync-Status bleibt deshalb nach jeder Änderung
+am Handy ehrlich auf `pending`.
 
 **Pull (Supabase → App):** Die App merkt sich `last_pulled_at` als
 **Server**-Zeitstempel (nie die Gerätezeit, sonst driftet es). Bei App-Start,
@@ -184,15 +198,31 @@ beim Sync; Cache-Budget (z. B. 200 MB) mit LRU-Verdrängung nach
 `last_used_at`; gepinnte Dokumente ("Offline behalten") sind von der
 Verdrängung ausgenommen; ein Ordner lässt sich komplett vorab laden.
 
-**Der PC-Weg (noch nicht gebaut):** Ein Node-Skript im HTML-Ordner, einmalig
-oder als Watcher, würde pro Datei: sha256 bilden (schon bekannt? überspringen),
-`<title>`/`<meta name="description">`/erste `<h1>` parsen, Tags strippen zu
-`preview_text`, die Datei in den Storage-Bucket hochladen
-(`<owner_id>/<uuid>.html`), die Zeile in `documents` anlegen bzw. per
-`content_hash` aktualisieren. Neue Dokumente landen dabei nicht direkt
-irgendwo, sondern unsortiert in der Sektion "Neu" mit Badge — das ist der
-einzige Ort, der Handlungsdruck erzeugen darf, und genau deshalb funktioniert
-das Sortieren.
+**Der PC-Weg:** `scripts/upload.mjs`, aufzurufen mit `npm run upload -- <ordner>`.
+Es macht pro Datei genau das, was das Konzept vorsah: sha256 bilden (bei
+gleichem `content_hash` überspringen), `<title>`/`<meta name="description">`/
+erste `<h1>` parsen, Tags strippen zu `preview_text`, die Datei in den
+Storage-Bucket hochladen (`<owner_id>/<uuid>.html`), die Zeile in `documents`
+anlegen bzw. aktualisieren. Neue Dokumente landen dabei nicht direkt irgendwo,
+sondern unsortiert in der Sektion „Neu" — das ist der einzige Ort, der
+Handlungsdruck erzeugen darf, und genau deshalb funktioniert das Sortieren.
+
+Titel- und Typerkennung teilt sich das Skript mit dem Import in der App
+(`src/data/detect.ts`, von Node direkt geladen): dieselbe Datei muss dieselbe
+Kachel bekommen, gleich auf welchem Weg sie hereinkommt.
+
+Zwei Dinge tut es bewusst nicht: sortieren und löschen. Verschwindet eine Datei
+aus dem Ordner, bleibt ihre Zeile stehen — was in der Bibliothek liegt, wirft
+der Nutzer weg, nicht ein Aufräumlauf im Hintergrund.
+
+**Warum der Service-Role-Key:** Das Skript kann sich nicht mit dem Anon-Key
+anmelden. Der hängt an einer anonymen Identität, und die des PCs wäre eine
+andere als die des Handys — die App sähe die hochgeladenen Zeilen nie. Es
+schreibt deshalb mit dem Service-Role-Key aus `.env.local` und setzt `owner_id`
+selbst auf die Kennung des Geräts (sie steht in den Einstellungen unter
+„Synchronisierung", und bei genau einer Identität im Projekt findet das Skript
+sie allein). Dieser Schlüssel umgeht RLS vollständig und gehört ausschließlich
+auf den Rechner — niemals in die App, niemals ins Repository.
 
 ---
 

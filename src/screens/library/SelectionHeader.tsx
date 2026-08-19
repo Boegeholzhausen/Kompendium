@@ -62,7 +62,13 @@ export function SelectionHeader({
   if (!visible) return null;
 
   return (
-    <Animated.View style={[styles.layer, { top, opacity }]}>
+    <Animated.View style={[styles.layer, { opacity }]}>
+      {/*
+        Die Statusleisten-Zone gehoert zur Kopfzeile: sie schwebt ueber der
+        Liste, und ohne eigene Flaeche scrollte der Inhalt sichtbar durch die
+        Safe Area. Dieselbe Farbe wie die Leiste darunter.
+      */}
+      <View style={[styles.statusPad, { height: top }]} />
       <View style={styles.bar}>
         <Text variant="title" numeric style={styles.count}>
           {`${count} ausgewählt`}
@@ -82,8 +88,12 @@ export function SelectionHeader({
 const styles = StyleSheet.create({
   layer: {
     position: 'absolute',
+    top: 0,
     left: 0,
     right: 0,
+  },
+  statusPad: {
+    backgroundColor: bg.surface,
   },
   bar: {
     flexDirection: 'row',

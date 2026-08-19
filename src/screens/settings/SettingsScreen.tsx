@@ -24,12 +24,16 @@
 import React, { useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useGuardedPush } from '../../navigation/useGuardedPush';
+
+import * as Clipboard from 'expo-clipboard';
 
 import { clearCache } from '../../data/cache';
 import { formatRelative, formatTime } from '../../data/format';
 import { storageUsage } from '../../data/storage';
+import { isSupabaseConfigured } from '../../data/supabase';
 import { useDocumentStore } from '../../state/documents';
+import { useSessionStore } from '../../state/session';
 import { syncLabels, useSyncStore } from '../../state/sync';
 import { accent, bg, semantic, size, space, text as textColor } from '../../theme';
 import { ArrowsDownUp, CloudCheck, CloudSlash, Warning } from '../../ui/icons';
@@ -44,7 +48,7 @@ const APP_VERSION = '1.4.0';
 
 export function SettingsScreen() {
   const insets = useSafeAreaInsets();
-  const router = useRouter();
+  const push = useGuardedPush();
 
   const documents = useDocumentStore((state) => state.documents);
   const markUncached = useDocumentStore((state) => state.markUncached);
@@ -52,6 +56,8 @@ export function SettingsScreen() {
   const status = useSyncStore((state) => state.status);
   const lastSyncedAt = useSyncStore((state) => state.lastSyncedAt);
   const sync = useSyncStore((state) => state.sync);
+  const lastError = useSyncStore((state) => state.lastError);
+  const userId = useSessionStore((state) => state.userId);
 
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -65,10 +71,29 @@ export function SettingsScreen() {
       : status === 'pending'
         ? textColor.secondary
         : accent.base;
+  // Im Fehlerfall steht der Grund unter dem Wort. "Sync fehlgeschlagen" allein
+  // laesst den Nutzer raten, ob er etwas tun kann — "Anonymous sign-ins are
+  // disabled" beantwortet genau das.
   const syncNote =
-    lastSyncedAt === null
-      ? 'noch nicht synchronisiert'
-      : `zuletzt ${formatTime(lastSyncedAt)} · ${formatRelative(lastSyncedAt)}`;
+    status === 'error' && lastError !== null
+      ? lastError
+      : lastSyncedAt === null
+        ? 'noch nicht synchronisiert'
+        : `zuletzt ${formatTime(lastSyncedAt)} · ${formatRelative(lastSyncedAt)}`;
+
+  /**
+   * Die Geraetekennung — dieselbe, unter der die Dokumente in Supabase liegen.
+   *
+   * Sie steht hier, weil der Weg vom PC sie braucht: `scripts/upload.mjs` laedt
+   * unter genau dieser Kennung hoch, und bei mehr als einer Identitaet im
+   * Projekt muss der Nutzer sagen koennen, welche gemeint ist. Angezeigt wird
+   * der Anfang, kopiert wird die ganze — eine UUID ist nichts zum Abtippen.
+   */
+  const copyUserId = async () => {
+    if (userId === null) return;
+    await Clipboard.setStringAsync(userId);
+    setNotice('Kennung kopiert');
+  };
 
   /**
    * "Cache leeren" nimmt weg, was nur zufaellig noch da ist — Dokumente mit
@@ -119,6 +144,14 @@ export function SettingsScreen() {
             inert={status === 'syncing'}
             onPress={sync}
           />
+          {isSupabaseConfigured && userId !== null ? (
+            <SettingsRow
+              label="Gerätekennung"
+              value={`${userId.slice(0, 8)} …`}
+              note="tippen zum Kopieren"
+              onPress={() => void copyUserId()}
+            />
+          ) : null}
         </SettingsGroup>
 
         <SettingsGroup title="Speicher" style={styles.group}>
@@ -129,7 +162,7 @@ export function SettingsScreen() {
             label="Offline behaltene Dokumente"
             value={String(usage.offlineCount)}
             chevron
-            onPress={() => router.push('/offline')}
+            onPress={() => push('/offline')}
           />
           <SettingsRow label="Cache leeren" action onPress={() => void emptyCache()} />
         </SettingsGroup>
@@ -139,11 +172,11 @@ export function SettingsScreen() {
             label="Papierkorb"
             value={String(usage.trashCount)}
             chevron
-            onPress={() => router.push('/papierkorb')}
+            onPress={() => push('/papierkorb')}
           />
-          <SettingsRow label="Darstellung" chevron onPress={() => router.push('/darstellung')} />
+          <SettingsRow label="Darstellung" chevron onPress={() => push('/darstellung')} />
           <SettingsRow label="Über" value={`Version ${APP_VERSION}`} />
-          <SettingsRow label="Abnahmeblätter" chevron onPress={() => router.push('/abnahme')} />
+          <SettingsRow label="Abnahmeblätter" chevron onPress={() => push('/abnahme')} />
         </SettingsGroup>
 
         <Text variant="label" tone="tertiary" style={styles.footnote}>

@@ -26,6 +26,7 @@ import {
 
 import { seedFolders, seedLibrary } from '../sampleLibrary';
 import { libraryTags } from '../sampleLibrary';
+import { isSupabaseConfigured } from '../supabase';
 import type { LibraryFolder, LibraryTag, StoredDocument } from '../library';
 import type { DocType } from '../../theme/tile';
 import { createSchemaSql, DATABASE_NAME, migrations, SCHEMA_VERSION } from './schema';
@@ -51,6 +52,8 @@ export interface DocumentPatch {
   updatedAt?: number;
   sizeBytes?: number;
   cacheKey?: string | null;
+  storagePath?: string | null;
+  contentHash?: string | null;
 }
 
 interface DocumentRow {
@@ -70,6 +73,8 @@ interface DocumentRow {
   trashed_at: number | null;
   source: string;
   cache_key: string | null;
+  storage_path: string | null;
+  content_hash: string | null;
 }
 
 /** Spaltenname je Feld des Patches — die einzige Stelle mit dieser Zuordnung. */
@@ -86,6 +91,8 @@ const columns: Record<keyof DocumentPatch, string> = {
   updatedAt: 'updated_at',
   sizeBytes: 'size_bytes',
   cacheKey: 'cache_key',
+  storagePath: 'storage_path',
+  contentHash: 'content_hash',
 };
 
 let handle: Promise<SQLiteDatabase> | null = null;
@@ -143,7 +150,18 @@ async function migrate(db: SQLiteDatabase): Promise<void> {
   await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 }
 
+/**
+ * Die Erstbefuellung — aber nur, solange es nichts Echtes gibt.
+ *
+ * Sobald Zugangsdaten in `.env` stehen, kommt der Bestand aus Supabase, und
+ * der Beispiel-Bestand haette dann nur eine Wirkung: er stuende beim ersten
+ * Start neben den echten Dokumenten und liesse den Nutzer aufraeumen, was er
+ * nie angelegt hat. Ohne `.env` bleibt er, was er war — der Grund, warum die
+ * App auch ohne Server etwas zu zeigen hat.
+ */
 async function seedIfEmpty(db: SQLiteDatabase): Promise<void> {
+  if (isSupabaseConfigured) return;
+
   const rows = await db.getAllAsync<{ count: number }>('SELECT COUNT(*) AS count FROM documents');
   if ((rows[0]?.count ?? 0) > 0) return;
 
@@ -173,8 +191,8 @@ async function insertRow(db: SQLiteDatabase, document: StoredDocument): Promise<
     `INSERT OR REPLACE INTO documents
        (id, title, doc_type, folder_name, favorite, cached, size_bytes,
         updated_at, imported_at, open_count, last_opened_at, note, keep_offline,
-        trashed_at, source, cache_key)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        trashed_at, source, cache_key, storage_path, content_hash)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       document.id,
       document.title,
@@ -192,6 +210,8 @@ async function insertRow(db: SQLiteDatabase, document: StoredDocument): Promise<
       document.trashedAt,
       document.source,
       document.cacheKey,
+      document.storagePath,
+      document.contentHash,
     ]
   );
 
@@ -223,6 +243,8 @@ function toDocument(row: DocumentRow, tagIds: string[]): StoredDocument {
     trashedAt: row.trashed_at,
     source: row.source as StoredDocument['source'],
     cacheKey: row.cache_key,
+    storagePath: row.storage_path,
+    contentHash: row.content_hash,
   };
 }
 
@@ -373,4 +395,225 @@ export async function deleteTag(tagId: string): Promise<void> {
 export async function setSetting(key: string, value: string): Promise<void> {
   const db = await database();
   await db.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [key, value]);
+}
+
+// ── Abgleich mit Supabase ───────────────────────────────────────────────────
+
+/**
+ * Was der Abgleich sich merkt. Zwei Schluessel, beide in `sync_state`:
+ *
+ *   last_pulled_at  Wasserzeichen des letzten Abrufs, ein SERVER-Zeitstempel
+ *                   als ISO-Text. Nie die Geraetezeit — sie geht vor oder nach,
+ *                   und beides laesst Zeilen verschwinden.
+ *   reset_done      Ob der einmalige Schnitt vom Beispiel-Bestand auf den
+ *                   echten schon gelaufen ist.
+ */
+export type SyncStateKey = 'last_pulled_at' | 'reset_done';
+
+export async function readSyncState(key: SyncStateKey): Promise<string | null> {
+  const db = await database();
+  const rows = await db.getAllAsync<{ value: string }>(
+    'SELECT value FROM sync_state WHERE key = ?',
+    [key]
+  );
+  return rows[0]?.value ?? null;
+}
+
+export async function writeSyncState(key: SyncStateKey, value: string): Promise<void> {
+  const db = await database();
+  await db.runAsync('INSERT OR REPLACE INTO sync_state (key, value) VALUES (?, ?)', [key, value]);
+}
+
+/**
+ * Der einmalige Schnitt: alles Lokale weg, damit der erste Abgleich auf einer
+ * leeren Flaeche aufsetzt.
+ *
+ * Betroffen sind Dokumente, Tags und Ordner — nicht `settings`: Darstellung,
+ * Sortierung und Textgroesse gehoeren dem Geraet, nicht dem Bestand, und sie
+ * beim Umstieg zurueckzusetzen waere ein Verlust ohne Gegenwert.
+ *
+ * `document_tags` geht ueber `ON DELETE CASCADE` von selbst mit.
+ */
+export async function clearLibrary(): Promise<void> {
+  const db = await database();
+  await db.withTransactionAsync(async () => {
+    await db.runAsync('DELETE FROM documents');
+    await db.runAsync('DELETE FROM tags');
+    await db.runAsync('DELETE FROM folders');
+  });
+}
+
+/** Eine Ordnerzeile, wie sie oben steht. */
+export interface RemoteFolder {
+  remoteId: string;
+  name: string;
+  color: string;
+  deleted: boolean;
+}
+
+/** Eine Dokumentzeile von oben, schon in die Begriffe der App uebersetzt. */
+export interface RemoteDocument {
+  id: string;
+  title: string;
+  docType: DocType;
+  /** Ausweis des Ordners oben; die Zuordnung auf den Namen passiert hier. */
+  folderRemoteId: string | null;
+  favorite: boolean;
+  keepOffline: boolean;
+  sizeBytes: number;
+  updatedAt: number;
+  importedAt: number;
+  openCount: number;
+  lastOpenedAt: number | null;
+  note: string;
+  trashedAt: number | null;
+  source: StoredDocument['source'];
+  storagePath: string | null;
+  contentHash: string | null;
+}
+
+export interface RemoteSnapshot {
+  folders: RemoteFolder[];
+  documents: RemoteDocument[];
+  tags: { id: string; name: string; color: string; deleted: boolean }[];
+  /** Zuordnungen; `deleted` heisst: das Tag wurde vom Dokument genommen. */
+  documentTags: { documentId: string; tagId: string; deleted: boolean }[];
+}
+
+/**
+ * Den Abruf in die lokale Datenbank schreiben.
+ *
+ * Alles in einer Transaktion: ein halb geschriebener Abruf waere eine
+ * Bibliothek, in der Dokumente in Ordnern stehen, die es noch nicht gibt.
+ *
+ * Was hier bewusst NICHT vom Server kommt: `cached` und `cache_key`. Beide
+ * beschreiben dieses Geraet — welche Datei hier liegt, weiss der Server nicht
+ * und soll es nicht bestimmen. Ein Abruf, der `cached` ueberschreibt, wuerde
+ * eine vorhandene Datei fuer nicht vorhanden erklaeren.
+ */
+export async function applyRemote(snapshot: RemoteSnapshot): Promise<void> {
+  const db = await database();
+
+  await db.withTransactionAsync(async () => {
+    for (const folder of snapshot.folders) {
+      if (folder.deleted) {
+        // Dieselbe Regel wie beim Loeschen von Hand: die Dokumente bleiben und
+        // landen in "Nicht einsortiert". Ein Ordner ist eine Ablage, kein
+        // Behaelter.
+        await db.runAsync(
+          `UPDATE documents SET folder_name = NULL
+           WHERE folder_name = (SELECT name FROM folders WHERE remote_id = ?)`,
+          [folder.remoteId]
+        );
+        await db.runAsync('DELETE FROM folders WHERE remote_id = ?', [folder.remoteId]);
+        continue;
+      }
+
+      // Umbenannt: lokal IST der Name der Ausweis, deshalb muessen die
+      // Dokumente mitziehen — dieselbe Ueberlegung wie in `renameFolder`.
+      const previous = await db.getAllAsync<{ name: string }>(
+        'SELECT name FROM folders WHERE remote_id = ?',
+        [folder.remoteId]
+      );
+      const before = previous[0]?.name;
+      if (before !== undefined && before !== folder.name) {
+        await db.runAsync('DELETE FROM folders WHERE name = ?', [before]);
+        await db.runAsync('UPDATE documents SET folder_name = ? WHERE folder_name = ?', [
+          folder.name,
+          before,
+        ]);
+      }
+
+      await db.runAsync(
+        `INSERT INTO folders (name, color, keep_offline, remote_id) VALUES (?, ?, 0, ?)
+         ON CONFLICT(name) DO UPDATE SET color = excluded.color, remote_id = excluded.remote_id`,
+        [folder.name, folder.color, folder.remoteId]
+      );
+    }
+
+    for (const tag of snapshot.tags) {
+      if (tag.deleted) {
+        await db.runAsync('DELETE FROM tags WHERE id = ?', [tag.id]);
+        continue;
+      }
+      await db.runAsync('INSERT OR REPLACE INTO tags (id, name, color) VALUES (?, ?, ?)', [
+        tag.id,
+        tag.name,
+        tag.color,
+      ]);
+    }
+
+    for (const document of snapshot.documents) {
+      const rows =
+        document.folderRemoteId === null
+          ? []
+          : await db.getAllAsync<{ name: string }>('SELECT name FROM folders WHERE remote_id = ?', [
+              document.folderRemoteId,
+            ]);
+      const folderName = rows[0]?.name ?? null;
+
+      await db.runAsync(
+        `INSERT INTO documents
+           (id, title, doc_type, folder_name, favorite, cached, size_bytes, updated_at,
+            imported_at, open_count, last_opened_at, note, keep_offline, trashed_at,
+            source, cache_key, storage_path, content_hash)
+         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           title = excluded.title,
+           doc_type = excluded.doc_type,
+           folder_name = excluded.folder_name,
+           favorite = excluded.favorite,
+           size_bytes = excluded.size_bytes,
+           updated_at = excluded.updated_at,
+           open_count = excluded.open_count,
+           last_opened_at = excluded.last_opened_at,
+           note = excluded.note,
+           keep_offline = excluded.keep_offline,
+           trashed_at = excluded.trashed_at,
+           source = excluded.source,
+           storage_path = excluded.storage_path,
+           content_hash = excluded.content_hash,
+           -- Ein anderer Hash heisst: der Inhalt oben ist ein anderer als der,
+           -- der hier liegt. Die Datei bleibt vorerst im Cache, gilt aber als
+           -- veraltet — der Viewer holt sie beim naechsten Oeffnen neu.
+           -- "IS NOT" statt "<>", weil NULL sonst jeden Vergleich verschluckt.
+           cached = CASE
+             WHEN documents.content_hash IS NOT excluded.content_hash THEN 0
+             ELSE documents.cached
+           END`,
+        [
+          document.id,
+          document.title,
+          document.docType,
+          folderName,
+          document.favorite ? 1 : 0,
+          document.sizeBytes,
+          document.updatedAt,
+          document.importedAt,
+          document.openCount,
+          document.lastOpenedAt,
+          document.note,
+          document.keepOffline ? 1 : 0,
+          document.trashedAt,
+          document.source,
+          document.storagePath,
+          document.contentHash,
+        ]
+      );
+    }
+
+    for (const pair of snapshot.documentTags) {
+      if (pair.deleted) {
+        await db.runAsync('DELETE FROM document_tags WHERE document_id = ? AND tag_id = ?', [
+          pair.documentId,
+          pair.tagId,
+        ]);
+        continue;
+      }
+      await db.runAsync('INSERT OR IGNORE INTO document_tags (document_id, tag_id) VALUES (?, ?)', [
+        pair.documentId,
+        pair.tagId,
+      ]);
+    }
+  });
 }

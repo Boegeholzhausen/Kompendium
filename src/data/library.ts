@@ -32,10 +32,19 @@ export interface LibraryFolder {
   keepOffline: boolean;
 }
 
-/** Woher das Dokument kam. `sample` ist die Erstbefuellung, kein Importweg. */
-export type DocumentSource = 'file' | 'clipboard' | 'url' | 'sample';
+/**
+ * Woher das Dokument kam.
+ *
+ * `pc` ist der Regelfall, sobald der Abgleich laeuft: die Datei wurde am
+ * Rechner erzeugt und mit `scripts/upload.mjs` hochgeladen. Die drei
+ * Importwege sind der Weg fuer alles, was unterwegs dazukommt. `sample` ist die
+ * Erstbefuellung und kein Importweg — sie erscheint nur, solange die App ohne
+ * Supabase laeuft.
+ */
+export type DocumentSource = 'pc' | 'file' | 'clipboard' | 'url' | 'sample';
 
 export const sourceLabels: Record<DocumentSource, string> = {
+  pc: 'Vom PC',
   file: 'Datei',
   clipboard: 'Zwischenablage',
   url: 'URL',
@@ -77,6 +86,19 @@ export interface StoredDocument extends LibraryDocument {
    * eigene Datei, der Viewer zeigt den erzeugten Beispielinhalt.
    */
   cacheKey: string | null;
+  /**
+   * Wo die Datei in Supabase Storage liegt. `null` heisst: diese Zeile war noch
+   * nie oben — kein Fehler, sondern der Normalfall fuer alles, was am Handy
+   * importiert und noch nicht abgeglichen wurde.
+   */
+  storagePath: string | null;
+  /**
+   * Pruefsumme des Inhalts, wie sie oben steht. Weicht sie vom Stand der
+   * gecachten Datei ab, ist die Datei veraltet — das Handoff-Dokument nennt
+   * Dateien unveraenderlich, ein geaenderter Hash ist deshalb ein neuer Inhalt
+   * und kein Konflikt: neu holen, nicht zusammenfuehren.
+   */
+  contentHash: string | null;
 }
 
 /** Frist des Papierkorbs aus Blatt `6a`: "Wird nach 30 Tagen endgültig gelöscht". */

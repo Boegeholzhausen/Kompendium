@@ -61,13 +61,40 @@ Handoff-Dokument.
 
 1. Projekt anlegen, unter *Project Settings > API* die URL und den
    Publishable/Anon Key kopieren, in `.env` eintragen.
-2. `supabase/schema.sql` im SQL-Editor ausführen.
+2. `supabase/schema.sql` im SQL-Editor ausführen. Das Skript ist idempotent —
+   bei einem bestehenden Projekt einfach erneut laufen lassen, es ergänzt
+   fehlende Spalten (zuletzt `documents.source_path`).
 3. Unter *Authentication > Sign In / Providers* **Anonymous sign-ins**
    aktivieren — die App meldet sich ohne Login-Screen an.
 
-Ohne `.env` startet die App trotzdem und läuft rein lokal. Vollständiges
-Schema, Setup-Schritte im Detail und Sync-Strategie:
-[DATABASE_STRUCTURE.md](DATABASE_STRUCTURE.md).
+Ohne `.env` startet die App trotzdem und läuft rein lokal — dann bleibt der
+Beispiel-Bestand aus `src/data/sampleLibrary.ts` die Bibliothek. **Mit** `.env`
+tritt er ab: die App legt beim ersten Abgleich einen sauberen Schnitt und baut
+den Bestand aus Supabase auf. Vollständiges Schema, Setup-Schritte im Detail
+und Sync-Strategie: [DATABASE_STRUCTURE.md](DATABASE_STRUCTURE.md).
+
+### Dokumente vom PC hochladen
+
+Der Bestand entsteht am Rechner. `scripts/upload.mjs` liest einen Ordner mit
+HTML-Dateien, lädt jede in den Storage-Bucket und legt ihre Zeile an:
+
+```bash
+cp .env.local.example .env.local   # Service-Role-Key eintragen
+npm run upload -- "C:\Pfad\zu\deinen\HTML-Dateien" --dry   # nur zeigen
+npm run upload -- "C:\Pfad\zu\deinen\HTML-Dateien"         # wirklich laden
+```
+
+`--dry` läuft auch ohne Zugangsdaten und zeigt, welcher Titel und welche Kachel
+erkannt würden. Ein zweiter Lauf über denselben Ordner lädt nichts erneut hoch
+(Wiedererkennung über `source_path`, Änderung über `content_hash`).
+
+**Reihenfolge beim ersten Mal:** erst die App einmal auf dem Handy starten —
+sie meldet sich anonym an und legt damit die Identität an, unter der die
+Dokumente liegen. Ohne sie hat das Skript keine `owner_id` und sagt das auch.
+
+Der Service-Role-Key in `.env.local` umgeht RLS vollständig. Er gehört auf den
+Rechner und niemals in die App — warum das Skript ihn trotzdem braucht, steht
+in [DATABASE_STRUCTURE.md](DATABASE_STRUCTURE.md).
 
 ## Struktur
 
@@ -93,7 +120,10 @@ scripts/shots.mjs     Screenshots des Viewer-Kernflows
 scripts/shots6.mjs    Screenshots der Ordner-/Tag-/Such-/Import-Screens
 scripts/shots7.mjs    Screenshots der Einstellungen, inkl. Import
 scripts/shots8.mjs    Screenshots der Lade-/Fehler-/Leerzustände
-supabase/schema.sql   Datenbankschema für den späteren Sync
+src/data/detect.ts    Titel- und Typerkennung — geteilt mit dem Upload-Skript
+src/data/remote/      Abgleich: Abruf (pull) und Nachladen der Dateien
+scripts/upload.mjs    Weg vom PC: HTML-Ordner nach Supabase
+supabase/schema.sql   Datenbankschema für den Sync
 ```
 
 ## Prüfungen
@@ -384,8 +414,16 @@ Beschriftungen im Aktionsbalken, ergänztes "Dokumente abdunkeln", ergänztes
 
 ## Noch offen
 
-- Der Abgleich mit Supabase. Client und Schema stehen, `state/sync.ts` führt
-  den Zustandsverlauf nur vor.
+- Push-Sync: lokale Änderungen (Ordner zuweisen, Tag setzen, Favorit,
+  Umbenennen, Papierkorb) stehen in SQLite und gehen noch nicht nach oben.
+  Der Sync-Status bleibt deshalb nach jeder Änderung am Handy auf
+  „Änderungen offen" — das ist die ehrliche Auskunft, keine Attrappe.
+- Abgleich beim Wechsel in den Vordergrund und Pull-to-Refresh. Zurzeit
+  läuft der Abruf beim App-Start und über „Jetzt synchronisieren".
+- Der Volltext eines abgeglichenen Dokuments steht erst zur Verfügung, wenn
+  seine Datei einmal geöffnet (und damit geladen) wurde. Bis dahin findet die
+  Suche es über Titel, Ordner und Tags. Der serverseitige `preview_text` wird
+  noch nicht mitgenommen.
 - Unter iOS wirkt die Textgröße nicht: `textZoom` ist Android-only.
 - Aus dem ursprünglichen Lösungskonzept noch nicht umgesetzt: Push-Sync
   (Outbox), PDF-Export, Share-Sheet-Empfang, Hintergrund-Sync,

@@ -183,10 +183,13 @@ function textOf(document: StoredDocument): string {
   const indexed = textCache.get(document.id);
   if (indexed !== undefined) return indexed;
 
-  // Kein Eintrag und keine Datei: die Erstbefuellung. Ihr Text wird erzeugt
-  // und danach genauso gepuffert.
+  // Kein Eintrag und keine Datei: entweder die Erstbefuellung — ihr Text wird
+  // erzeugt und danach genauso gepuffert — oder ein abgeglichenes Dokument,
+  // dessen Datei noch oben liegt. Fuer das zweite darf hier NICHTS entstehen:
+  // erzeugter Text wuerde Treffer liefern, die in dem Dokument nicht stehen.
+  // Titel, Ordner und Tags finden es weiterhin.
   const text =
-    document.cacheKey === null
+    document.cacheKey === null && document.source === 'sample'
       ? sampleDocumentText({
           id: document.id,
           title: document.title,

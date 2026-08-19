@@ -38,6 +38,7 @@ import * as Sharing from 'expo-sharing';
 
 import { documentUri, readDocument } from '../../data/cache';
 import type { LibraryTag } from '../../data/library';
+import { downloadDocument, needsDownload } from '../../data/remote/download';
 import { sampleDocumentHtml } from '../../data/sampleDocumentHtml';
 import { useAppearanceStore } from '../../state/appearance';
 import { documentById, documentTags, useDocumentStore } from '../../state/documents';
@@ -111,17 +112,29 @@ export function ViewerScreen({ documentId, searchTerm, onBack }: ViewerScreenPro
   const removeTag = useDocumentStore((state) => state.removeTag);
   const createTag = useDocumentStore((state) => state.createTag);
   const countOpen = useDocumentStore((state) => state.countOpen);
+  const markCached = useDocumentStore((state) => state.markCached);
   const toggleFavorite = useDocumentStore((state) => state.toggleFavorite);
   const trashDocuments = useDocumentStore((state) => state.trash);
   const folders = useFolderStore((state) => state.folders);
   const isOnline = useNetworkStore((state) => state.isOnline);
 
   /**
+   * Ist der Versuch, die Datei nachzuladen, gescheitert?
+   *
+   * Mit Netz ist ein nicht gecachtes Dokument zunaechst nur eine Wartezeit.
+   * Bleibt der Abruf aber erfolglos, ist die Wartezeit vorbei und das Dokument
+   * genauso wenig zu oeffnen wie ohne Netz — dann soll auch dasselbe dastehen
+   * statt einer leeren Buehne, die nichts erklaert.
+   */
+  const [loadFailed, setLoadFailed] = useState(false);
+
+  /**
    * Screen 22 (Blatt `4d`): weder im Gerätespeicher noch nachladbar. Mit Netz
    * ist ein nicht gecachtes Dokument kein Fehler, sondern eine Wartezeit —
    * deshalb haengt die Ansicht an BEIDEN Bedingungen.
    */
-  const unreachable = document !== undefined && !document.cached && !isOnline;
+  const unreachable =
+    document !== undefined && !document.cached && (!isOnline || loadFailed);
 
   const textScale = useAppearanceStore((state) => state.viewerTextScale);
   const dimDocuments = useAppearanceStore((state) => state.dimDocuments);
@@ -256,6 +269,37 @@ export function ViewerScreen({ documentId, searchTerm, onBack }: ViewerScreenPro
    * Beispielinhalt. Die Buehne bleibt so lange leer — sie ist `bg/base`, es
    * blitzt also nichts auf.
    */
+  /**
+   * Was der Abgleich gebracht hat, ist zunaechst nur eine Zeile: die Datei
+   * liegt noch oben. Sie kommt hier nach — beim Oeffnen, nicht beim Abgleich
+   * (DATABASE_STRUCTURE.md, Sync-Strategie).
+   *
+   * Scheitert der Abruf, passiert nichts weiter: das Dokument bleibt
+   * `cached: false` und zeigt damit den Zustand "nicht geladen" aus Blatt
+   * `4c` — dieselbe Darstellung wie fuer jedes andere Dokument ohne Inhalt,
+   * statt einer eigenen Fehlermeldung fuer denselben Sachverhalt.
+   */
+  useEffect(() => {
+    if (document === undefined || !isOnline) return;
+    if (!needsDownload(document)) return;
+
+    let alive = true;
+    setLoadFailed(false);
+    downloadDocument(document)
+      .then((result) => {
+        if (!alive) return;
+        setCachedHtml(result.html);
+        markCached(document.id, result.cacheKey, result.sizeBytes);
+      })
+      .catch((error: unknown) => {
+        console.warn('[kompendium] Dokument liess sich nicht laden:', error);
+        if (alive) setLoadFailed(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [document, isOnline, markCached]);
+
   const cacheKey = document?.cacheKey ?? null;
   useEffect(() => {
     if (cacheKey === null) {
@@ -287,6 +331,12 @@ export function ViewerScreen({ documentId, searchTerm, onBack }: ViewerScreenPro
   const html = useMemo(() => {
     if (!document) return '';
     if (document.cacheKey !== null) return cachedHtml ?? '';
+    // Der erzeugte Beispielinhalt gilt ausschliesslich fuer die Erstbefuellung.
+    // Ihn auch fuer ein echtes Dokument zu zeigen, dessen Datei gerade erst
+    // geholt wird, waere die schlimmste Form von Platzhalter: einer, der wie
+    // der Inhalt aussieht. Bis die Datei da ist, bleibt die Buehne leer —
+    // sie ist `bg/base`, es blitzt also nichts auf.
+    if (document.source !== 'sample') return '';
     return sampleDocumentHtml(
       document,
       insets.top + size.viewerHeaderHeight,

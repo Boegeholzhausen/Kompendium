@@ -382,6 +382,10 @@ export const seedLibrary: StoredDocument[] = seedDocuments.map((document) => ({
   trashedAt: null,
   source: 'sample',
   cacheKey: null,
+  // Der Beispiel-Bestand war nie oben und hat deshalb weder Ablageort noch
+  // Pruefsumme. Sobald Supabase eingerichtet ist, tritt er ohnehin ab.
+  storagePath: null,
+  contentHash: null,
 }));
 
 /** Die Ordner der Erstbefuellung, in der Reihenfolge ihres ersten Auftretens. */

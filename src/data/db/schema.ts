@@ -30,7 +30,7 @@
  * Bei Aenderungen am Schema hochzaehlen. `user_version` steht in der Datei
  * selbst — daran erkennt der naechste Start, ob eine Migration faellig ist.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const DATABASE_NAME = 'kompendium.db';
 
@@ -39,6 +39,9 @@ PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS documents (
+  -- Seit dem Abgleich ist das dieselbe Kennung wie oben in Supabase: eine
+  -- UUID. Eine eigene lokale Kennung mit einer Zuordnungstabelle daneben
+  -- waere eine zweite Wahrheit ueber dieselbe Zeile.
   id           TEXT PRIMARY KEY NOT NULL,
   title        TEXT NOT NULL,
   doc_type     TEXT NOT NULL,
@@ -54,7 +57,14 @@ CREATE TABLE IF NOT EXISTS documents (
   keep_offline INTEGER NOT NULL DEFAULT 0,
   trashed_at   INTEGER,
   source       TEXT NOT NULL DEFAULT 'sample',
-  cache_key    TEXT
+  cache_key    TEXT,
+  -- Wo die Datei in Supabase Storage liegt ("<owner>/<id>.html"). NULL heisst:
+  -- diese Zeile war noch nie oben. Der Viewer holt sich das HTML darueber, wenn
+  -- es nicht im lokalen Dateicache liegt.
+  storage_path TEXT,
+  -- Pruefsumme des Inhalts, wie sie oben steht. Aendert sie sich, ist die
+  -- gecachte Datei veraltet und wird beim naechsten Oeffnen neu geholt.
+  content_hash TEXT
 );
 
 CREATE TABLE IF NOT EXISTS tags (
@@ -72,10 +82,26 @@ CREATE TABLE IF NOT EXISTS document_tags (
 CREATE TABLE IF NOT EXISTS folders (
   name         TEXT PRIMARY KEY NOT NULL,
   color        TEXT NOT NULL,
-  keep_offline INTEGER NOT NULL DEFAULT 0
+  keep_offline INTEGER NOT NULL DEFAULT 0,
+  -- Der Ausweis derselben Zeile in Supabase. Lokal ist der Name der Ausweis
+  -- (siehe oben), oben ist es eine UUID — die Zuordnung muss irgendwo stehen,
+  -- sonst landet beim naechsten Abgleich jedes Dokument im falschen Ordner.
+  remote_id    TEXT
 );
 
 CREATE TABLE IF NOT EXISTS settings (
+  key   TEXT PRIMARY KEY NOT NULL,
+  value TEXT NOT NULL
+);
+
+-- Was der Abgleich sich merken muss: das Wasserzeichen des letzten Abrufs
+-- (last_pulled_at, ein SERVER-Zeitstempel) und ob der einmalige Schnitt vom
+-- Beispiel-Bestand zum echten schon gelaufen ist (reset_done).
+--
+-- Bewusst nicht in settings: das sind Voreinstellungen des Nutzers, die er
+-- in der Darstellung wiederfindet. Ein Wasserzeichen ist Buchhaltung des
+-- Abgleichs und hat dort nichts zu suchen.
+CREATE TABLE IF NOT EXISTS sync_state (
   key   TEXT PRIMARY KEY NOT NULL,
   value TEXT NOT NULL
 );
@@ -102,4 +128,14 @@ CREATE INDEX IF NOT EXISTS document_tags_by_tag ON document_tags (tag_id);
  */
 export const migrations: { to: number; sql: string }[] = [
   { to: 2, sql: 'ALTER TABLE documents ADD COLUMN last_opened_at INTEGER' },
+  // Version 3: der Abgleich mit Supabase. Die Spalten sind alle `NULL`-bar und
+  // bleiben es fuer alles, was rein lokal entstanden ist — eine Zeile ohne
+  // `storage_path` ist keine kaputte Zeile, sondern eine, die noch nie oben war.
+  { to: 3, sql: 'ALTER TABLE documents ADD COLUMN storage_path TEXT' },
+  { to: 3, sql: 'ALTER TABLE documents ADD COLUMN content_hash TEXT' },
+  { to: 3, sql: 'ALTER TABLE folders ADD COLUMN remote_id TEXT' },
+  {
+    to: 3,
+    sql: 'CREATE TABLE IF NOT EXISTS sync_state (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)',
+  },
 ];

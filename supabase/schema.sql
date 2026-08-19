@@ -68,6 +68,15 @@ create index if not exists documents_updated_idx on public.documents(owner_id, u
 create index if not exists documents_folder_idx  on public.documents(owner_id, folder_id);
 create index if not exists folders_updated_idx   on public.folders(owner_id, updated_at);
 
+-- Woher die Datei am PC stammt: der Pfad im HTML-Ordner. Nur `scripts/upload.mjs`
+-- schreibt ihn — er ist der Ausweis, an dem ein zweiter Lauf dieselbe Datei
+-- wiedererkennt, auch wenn sich ihr Inhalt (und damit `content_hash`) geaendert
+-- hat. Dokumente, die am Handy importiert wurden, lassen ihn leer.
+alter table public.documents add column if not exists source_path text;
+
+create unique index if not exists documents_source_path_idx
+  on public.documents(owner_id, source_path) where source_path is not null;
+
 -- ── Tags ──────────────────────────────────────────────────────────────────
 create table if not exists public.tags (
   id         uuid primary key default gen_random_uuid(),

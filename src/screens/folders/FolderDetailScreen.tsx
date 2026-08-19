@@ -28,9 +28,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { FlatList, StyleSheet, View, type ListRenderItemInfo } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-
 import { formatBytes, formatDocumentMeta } from '../../data/format';
 import type { StoredDocument } from '../../data/library';
+import { useGuardedPush } from '../../navigation/useGuardedPush';
 import { documentTags, useDocumentStore } from '../../state/documents';
 import { colorOf, useFolderStore } from '../../state/folders';
 import { isAllSelected, sortDocuments, sortLabels, useLibraryStore } from '../../state/library';
@@ -81,6 +81,7 @@ export interface FolderDetailScreenProps {
 export function FolderDetailScreen({ folderName, onBack }: FolderDetailScreenProps) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const push = useGuardedPush();
 
   const folders = useFolderStore((state) => state.folders);
   const renameFolder = useFolderStore((state) => state.renameFolder);
@@ -276,7 +277,7 @@ export function FolderDetailScreen({ folderName, onBack }: FolderDetailScreenPro
           interactive={false}
           onPress={() => {
             setFolderFilter(folderName);
-            router.push('/suche');
+            push('/suche');
           }}
         />
       </View>
@@ -321,7 +322,7 @@ export function FolderDetailScreen({ folderName, onBack }: FolderDetailScreenPro
         toggleSelected(item.id);
         return;
       }
-      router.push(`/dokument/${item.id}`);
+      push(`/dokument/${item.id}`);
     };
 
     if (isGrid) {

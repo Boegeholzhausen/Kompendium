@@ -17,7 +17,7 @@
 import React, { useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useGuardedPush } from '../../navigation/useGuardedPush';
 
 import { useDocumentStore } from '../../state/documents';
 import { useSyncStore } from '../../state/sync';
@@ -52,7 +52,7 @@ function inPairs<T>(items: T[]): (T | null)[][] {
 
 export function FoldersScreen() {
   const insets = useSafeAreaInsets();
-  const router = useRouter();
+  const push = useGuardedPush();
 
   const folders = useFolderStore((state) => state.folders);
   const documents = useDocumentStore((state) => state.documents);
@@ -93,7 +93,7 @@ export function FoldersScreen() {
   }, [counts, folders, sort]);
 
   const openFolder = (folder: LibraryFolder) => {
-    router.push(`/ordner/${encodeURIComponent(folder.name)}`);
+    push(`/ordner/${encodeURIComponent(folder.name)}`);
   };
 
   /**
@@ -133,7 +133,7 @@ export function FoldersScreen() {
           scaleOnPress={false}
           // Eigene Route, kein Ordner mit dem Namen "alle": ein echter Ordner
           // duerfte sonst nie so heissen.
-          onPress={() => router.push('/alle-dokumente')}
+          onPress={() => push('/alle-dokumente')}
           accessibilityRole="button"
           accessibilityLabel={`Alle Dokumente, ${allCount}`}
         >

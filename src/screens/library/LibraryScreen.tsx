@@ -34,7 +34,7 @@ import Animated, {
   useSharedValue,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useGuardedPush } from '../../navigation/useGuardedPush';
 
 import { formatDocumentMeta } from '../../data/format';
 import type { StoredDocument } from '../../data/library';
@@ -66,7 +66,7 @@ type OpenSheet = null | 'sort' | 'import';
 
 export function LibraryScreen() {
   const insets = useSafeAreaInsets();
-  const router = useRouter();
+  const push = useGuardedPush();
 
   const viewMode = useLibraryStore((state) => state.viewMode);
   const sort = useLibraryStore((state) => state.sort);
@@ -183,12 +183,12 @@ export function LibraryScreen() {
         toggleSelected(document.id);
         return;
       }
-      router.push(`/dokument/${document.id}`);
+      push(`/dokument/${document.id}`);
     },
-    [router, selectionMode, toggleSelected]
+    [push, selectionMode, toggleSelected]
   );
 
-  const openSearch = useCallback(() => router.push('/suche'), [router]);
+  const openSearch = useCallback(() => push('/suche'), [push]);
 
   /**
    * Die Auswahl-Aktionsleiste sitzt im Tab-Rahmen und legt ihren Wunsch im

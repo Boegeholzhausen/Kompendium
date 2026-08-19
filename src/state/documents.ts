@@ -62,6 +62,11 @@ interface DocumentState {
 
   /** Nach "Cache leeren": die Zeilen bleiben, ihr Inhalt ist weg. */
   markUncached: (documentIds: string[]) => void;
+  /**
+   * Gegenstueck zu `markUncached`: die Datei liegt jetzt auf dem Geraet.
+   * Gerufen, nachdem der Viewer sie aus Supabase Storage geholt hat.
+   */
+  markCached: (documentId: string, cacheKey: string, sizeBytes: number) => void;
 
   /** Ein importiertes Dokument aufnehmen (Blatt `3g`). */
   addDocument: (document: StoredDocument) => void;
@@ -247,6 +252,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   markUncached: (documentIds) =>
     set((state) => ({
       documents: patch(state.documents, documentIds, { cached: false, cacheKey: null }),
+    })),
+
+  markCached: (documentId, cacheKey, sizeBytes) =>
+    set((state) => ({
+      documents: patch(state.documents, [documentId], { cached: true, cacheKey, sizeBytes }),
     })),
 
   addDocument: (document) =>

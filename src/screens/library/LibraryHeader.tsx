@@ -11,6 +11,11 @@
  * Groessenwechsel den Inhalt nicht verschiebt. Das Suchfeld gehoert deshalb
  * NICHT hierher, sondern in die Liste: es soll wegscrollen.
  *
+ * Er beginnt am oberen Bildrand, nicht erst unter der Safe Area: die Zone der
+ * Statusleiste ist die erste Zeile des Kopfs und traegt dieselbe Farbe wie die
+ * Kopfzeile. Ohne sie scrollten die Dokumentzeilen sichtbar hinter Uhrzeit und
+ * Symbolen durch.
+ *
  * Abweichung von Blatt `1d`: dort liegt die 2-px-Sync-Leiste unter der
  * geklebten Filterleiste. Hier liegt sie in beiden Zustaenden direkt unter der
  * Kopfzeile — das Komponenten-Inventar 15 sagt "direkt unter dem Header", und
@@ -187,10 +192,25 @@ export function LibraryHeader({
     };
   });
 
+  /**
+   * Die Statusleisten-Zone ueber der Kopfzeile. Der Kopf schwebt, die Liste
+   * scrollt darunter durch — ohne eigene Flaeche schiene der Inhalt oben durch
+   * das Loch der Safe Area hindurch. Sie faerbt sich exakt wie die Kopfzeile,
+   * damit beide als eine Flaeche lesen.
+   */
+  const statusStyle = useAnimatedStyle(() => ({
+    backgroundColor: interpolateColor(
+      progress(scrollY.value),
+      [0, 1],
+      [bg.base, bg.surface]
+    ),
+  }));
+
   const ViewIcon = viewMode === 'list' ? Rows : SquaresFour;
 
   return (
-    <View style={[styles.overlay, { top }]} pointerEvents="box-none">
+    <View style={styles.overlay} pointerEvents="box-none">
+      <Animated.View style={[{ height: top }, statusStyle]} />
       <Animated.View style={[styles.bar, barStyle]}>
         <Animated.View style={[styles.titleLayer, styles.titleDisplay, displayTitleStyle]}>
           <Text variant="display">Bibliothek</Text>
@@ -293,6 +313,7 @@ export function LibraryHeader({
 const styles = StyleSheet.create({
   overlay: {
     position: 'absolute',
+    top: 0,
     left: 0,
     right: 0,
   },
