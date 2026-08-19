@@ -1,5 +1,5 @@
 /**
- * Die Typen der Bibliothek — was ein Dokument, ein Tag und ein Ordner sind.
+ * Die Typen der Bibliothek — was ein Dokument und ein Ordner sind.
  *
  * Sie standen bis Schritt 6 in `sampleLibrary.ts`, weil es dort den einzigen
  * Bestand gab. Seit Schritt 7 ist die lokale Datenbank die Wahrheitsquelle und
@@ -13,12 +13,6 @@
  * Schluessel im Dateicache).
  */
 import type { DocType } from '../theme/tile';
-
-export interface LibraryTag {
-  id: string;
-  name: string;
-  color: string;
-}
 
 export interface LibraryFolder {
   /**
@@ -57,7 +51,6 @@ export interface LibraryDocument {
   docType: DocType;
   /** null = nicht einsortiert. Diese Dokumente stehen in der Sektion "Neu". */
   folderName: string | null;
-  tagIds: string[];
   favorite: boolean;
   /** Offline nicht im Cache: die Zeile bleibt sichtbar, ist aber nicht zu oeffnen. */
   cached: boolean;
@@ -99,6 +92,18 @@ export interface StoredDocument extends LibraryDocument {
    * und kein Konflikt: neu holen, nicht zusammenfuehren.
    */
   contentHash: string | null;
+  /**
+   * Wann als gelesen markiert; `null` = ungelesen. Lesen setzt das NICHT von
+   * selbst — der Status kommt nur ueber die Wischgeste und die gestenfreien
+   * Ersatzwege (Kontextmenue, Auswahlleiste, Info-Sheet).
+   */
+  readAt: number | null;
+  /**
+   * Wann archiviert; `null` = nicht archiviert. Zweite Achse neben `readAt`
+   * und keine dritte Stufe: sonst ginge beim Entarchivieren verloren, dass das
+   * Dokument gelesen wurde.
+   */
+  archivedAt: number | null;
 }
 
 /** Frist des Papierkorbs aus Blatt `6a`: "Wird nach 30 Tagen endgültig gelöscht". */
@@ -122,9 +127,21 @@ export function isTrashed(document: StoredDocument): boolean {
   return document.trashedAt !== null;
 }
 
-/** Tags eines Dokuments als vollstaendige Eintraege, in der gesetzten Reihenfolge. */
-export function documentTags(tags: LibraryTag[], ids: string[]): LibraryTag[] {
-  return ids
-    .map((id) => tags.find((tag) => tag.id === id))
-    .filter((tag): tag is LibraryTag => tag !== undefined);
+/** Noch nicht als gelesen markiert — der Filter "Ungelesen" haengt daran. */
+export function isUnread(document: { readAt: number | null }): boolean {
+  return document.readAt === null;
+}
+
+/** Aus dem Alltag genommen, aber nicht geloescht — eigene Achse neben `readAt`. */
+export function isArchived(document: { archivedAt: number | null }): boolean {
+  return document.archivedAt !== null;
+}
+
+/**
+ * Was Bibliothek und Ordner-Detail zeigen: alles ausser Papierkorb UND Archiv.
+ * Vier Listen und die Suche muessen sich darueber einig sein — deshalb steht
+ * die Regel hier und nicht je Screen neu geschrieben.
+ */
+export function isVisible(document: StoredDocument): boolean {
+  return document.trashedAt === null && document.archivedAt === null;
 }

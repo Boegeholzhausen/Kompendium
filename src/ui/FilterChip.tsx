@@ -6,7 +6,7 @@
  *   aktiv      accent/surface + accent/border + accent
  *   gedrueckt  bg/overlay + border/strong + Skalierung 0.97
  *
- * Varianten: mit Farbpunkt (Tag-Filter), mit fuehrendem Icon (Favoriten),
+ * Varianten: mit Farbpunkt (Ordnerfarbe), mit fuehrendem Icon (Ungelesen,
  * mit `caret-down` (Auswahl-Chip in der Suche) und mit `x` (aktiver Filter,
  * der sich abwerfen laesst).
  */
@@ -25,7 +25,7 @@ export interface FilterChipProps {
   compact?: boolean;
   /** Fuehrendes Icon, etwa `star` fuer den Favoriten-Filter. */
   icon?: Icon;
-  /** Farbpunkt eines Tag-Filters. */
+  /** Farbpunkt, etwa eine Ordnerfarbe. */
   dotColor?: string;
   /** Auswahl-Chip: `caret-down` rechts. */
   dropdown?: boolean;

@@ -100,13 +100,11 @@ export async function pullChanges(): Promise<PullResult> {
   const watermark = await readSyncState('last_pulled_at');
 
   // Die Reihenfolge der Abfragen ist gleichgueltig — geschrieben wird in einer
-  // Transaktion, und dort haengt die Reihenfolge fest: erst Ordner, dann Tags,
-  // dann Dokumente, dann die Zuordnungen.
-  const [folderRows, tagRows, documentRows, pairRows] = await Promise.all([
+  // Transaktion, und dort haengt die Reihenfolge fest: erst Ordner, dann
+  // Dokumente.
+  const [folderRows, documentRows] = await Promise.all([
     since('folders', watermark),
-    since('tags', watermark),
     since('documents', watermark),
-    since('document_tags', watermark),
   ]);
 
   const folders: RemoteFolder[] = folderRows.map((row) => ({
@@ -140,38 +138,26 @@ export async function pullChanges(): Promise<PullResult> {
       source: SOURCES.includes(source) ? source : 'pc',
       storagePath: row.storage_path === null ? null : String(row.storage_path),
       contentHash: row.content_hash === null ? null : String(row.content_hash),
+      readAt: millis(row.read_at as string | null),
+      archivedAt: millis(row.archived_at as string | null),
     };
   });
 
-  const snapshot: RemoteSnapshot = {
-    folders,
-    documents,
-    tags: tagRows.map((row) => ({
-      id: String(row.id),
-      name: String(row.name ?? ''),
-      color: colorFor(row.color as string | null),
-      deleted: row.deleted_at !== null,
-    })),
-    documentTags: pairRows.map((row) => ({
-      documentId: String(row.document_id),
-      tagId: String(row.tag_id),
-      deleted: row.deleted_at !== null,
-    })),
-  };
+  const snapshot: RemoteSnapshot = { folders, documents };
 
   await applyRemote(snapshot);
 
   // Das neue Wasserzeichen ist der groesste empfangene Zeitstempel, nicht
   // "jetzt": zwischen Abfrage und Antwort kann oben eine Zeile entstanden
   // sein, und die waere mit der Geraetezeit fuer immer uebersprungen.
-  const stamps = [...folderRows, ...tagRows, ...documentRows, ...pairRows]
+  const stamps = [...folderRows, ...documentRows]
     .map((row) => String(row.updated_at ?? ''))
     .filter((value) => value !== '');
   const newest = stamps.length === 0 ? null : stamps.reduce((a, b) => (a > b ? a : b));
   if (newest !== null) await writeSyncState('last_pulled_at', newest);
 
   return {
-    changed: folderRows.length + tagRows.length + documentRows.length + pairRows.length,
+    changed: folderRows.length + documentRows.length,
     at: newest ?? watermark,
   };
 }

@@ -3,7 +3,7 @@
  *
  * Hoehe 48, `radius md`, `bg/raised`.
  *   Ruhe   1 px `border/subtle`, Lupe 20 in `text/tertiary`, Platzhalter
- *          "Titel, Inhalt, Tag"
+ *          "Titel, Inhalt, Ordner"
  *   Fokus  2 px `accent/border`, Lupe in `text/secondary`, `x-circle` rechts.
  *          Der Innenabstand sinkt um 1, damit beim Fokussieren nichts springt.
  *
@@ -35,7 +35,7 @@ export interface SearchFieldProps {
 export function SearchField({
   value = '',
   onChangeText,
-  placeholder = 'Titel, Inhalt, Tag',
+  placeholder = 'Titel, Inhalt, Ordner',
   interactive = true,
   autoFocus = false,
   onPress,

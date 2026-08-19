@@ -2,7 +2,7 @@
  * Auswahl-Sheet — eine Liste, aus der genau eine oder mehrere Zeilen gelten.
  *
  * Im Prototyp gibt es dafuer kein eigenes Blatt; gebraucht wird die Form an
- * vier Stellen: Sortierung der Bibliothek, Sortierung der Ordner, Tag-Filter
+ * vier Stellen: Sortierung der Bibliothek, Sortierung der Ordner, Ordnerfilter
  * und Zeitraum-Filter der Suche (Blatt `3d` zeigt beide als Dropdown-Chips mit
  * `caret-down`, also als etwas, das eine Liste aufklappt).
  *
@@ -23,7 +23,7 @@ import { Text } from './Text';
 export interface ChoiceOption {
   key: string;
   label: string;
-  /** Farbpunkt links, etwa die Tag-Farbe im Tag-Filter. */
+  /** Farbpunkt links, etwa die Ordnerfarbe im Ordnerfilter. */
   dotColor?: string;
   /** Zahl rechts vor dem Haken, etwa die Anzahl der Dokumente. */
   count?: number;

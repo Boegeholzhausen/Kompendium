@@ -7,7 +7,7 @@
  *
  *   viewMode      Liste oder Kacheln — gilt auch im Ordner-Detail (Blatt 3b)
  *   sort          zuletzt geaendert / Titel / Groesse / zuletzt geoeffnet
- *   activeFilter  "Alle", "Favoriten" oder ein Tag
+ *   activeFilter  "Alle", "Ungelesen", "Favoriten" oder "Archiv"
  *
  *   selectionMode Mehrfachauswahl aktiv (Blatt `3h`)
  *   selectedIds   die gewaehlten Dokumente
@@ -35,8 +35,12 @@ import type { StoredDocument } from '../data/library';
 
 export type ViewMode = 'list' | 'grid';
 export type SortKey = 'recent' | 'title' | 'size' | 'opened';
-/** 'all' | 'favorites' | Tag-Ausweis */
-export type LibraryFilter = string;
+/**
+ * Die vier Chips der Filterleiste. Eine echte Union statt `string`: seit die
+ * Tags weg sind, gibt es keine Filter mehr, die erst zur Laufzeit entstehen —
+ * und ein Tippfehler faellt jetzt beim Uebersetzen auf.
+ */
+export type LibraryFilter = 'all' | 'unread' | 'favorites' | 'archive';
 
 /**
  * Was die Auswahl-Aktionsleiste anfordert.
@@ -46,7 +50,7 @@ export type LibraryFilter = string;
  * faedeln, legt die Leiste hier einen Wunsch ab; die Bibliothek nimmt ihn auf
  * und raeumt ihn wieder weg. Eine Stelle, ein Weg.
  */
-export type SelectionRequest = 'move' | 'tag' | 'favorite' | 'trash';
+export type SelectionRequest = 'move' | 'read' | 'archive' | 'trash';
 
 export const sortLabels: Record<SortKey, string> = {
   recent: 'Zuletzt geändert',

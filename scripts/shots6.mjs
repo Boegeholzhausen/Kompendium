@@ -1,5 +1,5 @@
 /**
- * Bildkontrolle der Screens aus Schritt 6 (Ordner, Tags, Suche, Import,
+ * Bildkontrolle der Screens aus Schritt 6 (Ordner, Suche, Import,
  * Mehrfachauswahl) gegen den Prototyp.
  *
  * Nicht Teil der App. Aufruf nach `expo export --platform web`, waehrend
@@ -52,21 +52,15 @@ await wait(500);
 // Ordner-Detail.
 await page.getByLabel(/^Ordner Finanzen/).click();
 await shot('04-ordner-detail');
-await page.getByLabel('Zurück').first().click();
-await wait(500);
 
-// Tag-Verwaltung.
-await page.getByLabel('Tags', { exact: true }).click();
-await shot('05-tags');
-
-// Umbenennen-Sheet ueber den Chevron.
-await page.getByLabel(/^Tag Recht,/).click();
+// Umbenennen-Sheet ueber "Bearbeiten". Frueher fuehrte hier der Weg ueber die
+// Tag-Verwaltung; die gibt es nicht mehr, das Sheet ist dasselbe geblieben.
+await page.getByText('Bearbeiten', { exact: true }).click();
 await wait(400);
-// Nicht `getByLabel`: die Wischaktion hinter der Zeile traegt dieselbe
-// Beschriftung. Der Menueeintrag ist ueber seine Rolle eindeutig.
-await page.getByRole('menuitem', { name: 'Umbenennen' }).click();
-await shot('06-umbenennen');
+await shot('05-umbenennen');
 await page.keyboard.press('Escape');
+await wait(400);
+await page.getByLabel('Zurück').first().click();
 await wait(500);
 
 // Suche — leer, dann Ergebnisse, dann nichts gefunden.

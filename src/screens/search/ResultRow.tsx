@@ -14,6 +14,7 @@ import React from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { formatRelative } from '../../data/format';
+import { isArchived } from '../../data/library';
 import { useUnavailable } from '../../state/network';
 import type { SearchResult } from '../../data/search';
 import { border, size, space } from '../../theme';
@@ -31,7 +32,11 @@ export interface ResultRowProps {
 
 export function ResultRow({ result, last = false, onPress }: ResultRowProps) {
   const { document, title, folderName, snippet, snippetHit, titleHit } = result;
-  const footer = `${folderName ?? 'Nicht einsortiert'} · ${formatRelative(document.updatedAt)}`;
+  // Archivierte Dokumente werden mitgesucht (siehe `passesFilters`), stehen
+  // aber in keiner Liste. Das "Archiv ·" davor sagt, warum — ohne es waere der
+  // Treffer ein Dokument, das man danach nirgends wiederfindet.
+  const place = `${isArchived(document) ? 'Archiv · ' : ''}${folderName ?? 'Nicht einsortiert'}`;
+  const footer = `${place} · ${formatRelative(document.updatedAt)}`;
   // Gesperrt ist ein Treffer nur ohne Cache UND ohne Netz (Blatt `4c`) —
   // sonst waere ein gefundenes Dokument nicht zu oeffnen, obwohl es sich
   // laden liesse.

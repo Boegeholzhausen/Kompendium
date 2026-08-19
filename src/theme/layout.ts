@@ -136,6 +136,17 @@ export const size = {
   /** Farbpunkt in der Tag-Verwaltung */
   tagDotLarge: 10,
 
+  /**
+   * Wischgeste in der Dokumentzeile (`ui/SwipeActions`).
+   *
+   * `systemGestureEdge`: Androids Zurueck-Geste beginnt am Bildrand — was
+   * dort anfaengt, gehoert dem System und darf die Zeile nicht mitnehmen.
+   * `swipeTrigger`: ab diesem Weg loest das Loslassen die Aktion aus; kuerzer
+   * waere es ein Versehen, laenger eine Turnuebung.
+   */
+  systemGestureEdge: 24,
+  swipeTrigger: 96,
+
   /** Unterer Innenabstand aller Listen: FAB + Tab-Bar */
   listBottomPadding: 88,
 

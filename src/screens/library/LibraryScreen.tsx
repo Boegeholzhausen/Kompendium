@@ -38,17 +38,18 @@ import { useGuardedPush } from '../../navigation/useGuardedPush';
 
 import { formatDocumentMeta } from '../../data/format';
 import type { StoredDocument } from '../../data/library';
-import { documentTags, useDocumentStore } from '../../state/documents';
+import { isArchived, isUnread, isVisible, useDocumentStore } from '../../state/documents';
 import { isAllSelected, sortDocuments, useLibraryStore } from '../../state/library';
 import { useNotice } from '../../state/notice';
 import { useUnavailable } from '../../state/network';
 import { useSyncStore } from '../../state/sync';
-import { bg, size, space } from '../../theme';
+import { accent, bg, size, space, text as textColor } from '../../theme';
 import { DocCard } from '../../ui/DocCard';
 import { DocRow } from '../../ui/DocRow';
 import { Fab } from '../../ui/Fab';
-import { FileHtml, WarningCircle } from '../../ui/icons';
+import { Archive, CheckCircle, Circle, FileHtml, WarningCircle } from '../../ui/icons';
 import { SearchField } from '../../ui/SearchField';
+import { SwipeActions } from '../../ui/SwipeActions';
 import { SectionHeader } from '../../ui/SectionHeader';
 import { useDocumentActions } from './documentActions';
 import { EmptyLibrary } from './EmptyLibrary';
@@ -84,19 +85,22 @@ export function LibraryScreen() {
   const setRequest = useLibraryStore((state) => state.setRequest);
 
   /**
-   * Der ganze Bestand aus der Datenbank. Titel, Tags, Ordner und Favorit sind
-   * Spalten dieser Zeilen — was im Info-Sheet, im Tag-Sheet oder beim
+   * Der ganze Bestand aus der Datenbank. Titel, Ordner, Favorit und der
+   * Workflow-Status sind Spalten dieser Zeilen — was im Info-Sheet oder beim
    * Verschieben geaendert wird, steht damit sofort auch hier.
    */
   const allDocuments = useDocumentStore((state) => state.documents);
   /** Vor dem ersten Lesen aus der Datenbank ist die Bibliothek nicht leer, sondern unbekannt. */
   const hydrated = useDocumentStore((state) => state.hydrated);
-  const tags = useDocumentStore((state) => state.tags);
   const toggleFavorite = useDocumentStore((state) => state.toggleFavorite);
+  const toggleRead = useDocumentStore((state) => state.toggleRead);
+  const toggleArchived = useDocumentStore((state) => state.toggleArchived);
+  const setRead = useDocumentStore((state) => state.setRead);
+  const setArchived = useDocumentStore((state) => state.setArchived);
   const trash = useDocumentStore((state) => state.trash);
 
   /**
-   * Kontextmenue, Verschieben, Taggen und der Toast — dieselben Griffe, die
+   * Kontextmenue, Verschieben, Status und der Toast — dieselben Griffe, die
    * auch das Ordner-Detail benutzt (`documentActions`).
    */
   const actions = useDocumentActions();
@@ -134,11 +138,11 @@ export function LibraryScreen() {
    */
   const newDocuments = useMemo(() => {
     const now = Date.now();
+    // `isVisible` statt nur "nicht im Papierkorb": was archiviert ist, ist
+    // nicht neu — es wurde bewusst aus dem Alltag genommen.
     return allDocuments.filter(
       (document) =>
-        document.trashedAt === null &&
-        document.folderName === null &&
-        now - document.importedAt < DAY
+        isVisible(document) && document.folderName === null && now - document.importedAt < DAY
     );
   }, [allDocuments]);
 
@@ -150,9 +154,13 @@ export function LibraryScreen() {
       // Was in "Neu" steht, steht nicht ein zweites Mal darunter (Blatt `1c`).
       // In der Kachelansicht gibt es die Sektion nicht, dort fehlt nichts.
       if (!isGrid && newIds.has(document.id)) return false;
-      if (activeFilter === 'all') return true;
+      if (activeFilter === 'archive') return isArchived(document);
+      // Alle, Ungelesen und Favoriten zeigen kein Archiv: es ist eine zweite
+      // Achse, kein Filterwert — sonst stuende Archiviertes doppelt herum.
+      if (isArchived(document)) return false;
+      if (activeFilter === 'unread') return isUnread(document);
       if (activeFilter === 'favorites') return document.favorite;
-      return document.tagIds.includes(activeFilter);
+      return true;
     });
 
     return sortDocuments(filtered, sort);
@@ -191,6 +199,37 @@ export function LibraryScreen() {
   const openSearch = useCallback(() => push('/suche'), [push]);
 
   /**
+   * Was die beiden Wischrichtungen tun. Beide melden sich mit einem Toast samt
+   * "Rueckgaengig": eine Geste laesst sich leichter versehentlich ausloesen als
+   * ein Menueeintrag, und beim Archivieren verschwindet die Zeile obendrein.
+   */
+  const swipeArchive = useCallback(
+    (document: StoredDocument) => {
+      const wasArchived = isArchived(document);
+      toggleArchived(document.id);
+      actions.notify({
+        message: wasArchived ? 'Aus dem Archiv geholt' : 'Archiviert',
+        icon: Archive,
+        undo: () => setArchived([document.id], wasArchived),
+      });
+    },
+    [actions, setArchived, toggleArchived]
+  );
+
+  const swipeRead = useCallback(
+    (document: StoredDocument) => {
+      const wasUnread = isUnread(document);
+      toggleRead(document.id);
+      actions.notify({
+        message: wasUnread ? 'Als gelesen markiert' : 'Als ungelesen markiert',
+        icon: CheckCircle,
+        undo: () => setRead([document.id], !wasUnread),
+      });
+    },
+    [actions, setRead, toggleRead]
+  );
+
+  /**
    * Die Auswahl-Aktionsleiste sitzt im Tab-Rahmen und legt ihren Wunsch im
    * Zustand ab; hier wird er ausgefuehrt und wieder weggeraeumt.
    */
@@ -198,8 +237,8 @@ export function LibraryScreen() {
     if (request === null) return;
 
     if (request === 'move') actions.openMove();
-    if (request === 'tag') actions.openTag();
-    if (request === 'favorite') actions.toggleFavoriteSelection();
+    if (request === 'read') actions.readSelection();
+    if (request === 'archive') actions.archiveSelection();
     if (request === 'trash') actions.trashSelection(selectedIds);
 
     setRequest(null);
@@ -254,6 +293,7 @@ export function LibraryScreen() {
             type={item.docType}
             folderName={item.folderName}
             favorite={item.favorite}
+            unread={isUnread(item)}
             unavailable={unavailable(item)}
             state={unavailable(item) ? 'unavailable' : 'default'}
             onPress={() => openDocument(item)}
@@ -264,13 +304,31 @@ export function LibraryScreen() {
       }
 
       return (
-        <View style={styles.rowWrap}>
+        // Wischen ist die Abkuerzung; dieselben beiden Aktionen stehen im
+        // Kontextmenue (langer Druck) und in der Auswahl-Aktionsleiste.
+        <SwipeActions
+          style={styles.rowWrap}
+          right={{
+            icon: Archive,
+            label: isArchived(item) ? 'Zurück' : 'Archiv',
+            surface: bg.raised,
+            tint: textColor.primary,
+            onTrigger: () => swipeArchive(item),
+          }}
+          left={{
+            icon: isUnread(item) ? CheckCircle : Circle,
+            label: isUnread(item) ? 'Gelesen' : 'Ungelesen',
+            surface: accent.surface,
+            tint: accent.base,
+            onTrigger: () => swipeRead(item),
+          }}
+        >
           <DocRow
             id={item.id}
             title={item.title}
             type={item.docType}
             meta={formatDocumentMeta(item.updatedAt, item.sizeBytes)}
-            tagColors={documentTags(tags, item.tagIds).map((tag) => tag.color)}
+            unread={isUnread(item)}
             favorite={item.favorite}
             unavailable={unavailable(item)}
             selectionMode={selectionMode}
@@ -280,7 +338,7 @@ export function LibraryScreen() {
             onLongPress={selectionMode ? undefined : () => actions.openMenu(item)}
             onToggleFavorite={() => toggleFavorite(item.id)}
           />
-        </View>
+        </SwipeActions>
       );
     },
     [
@@ -289,7 +347,8 @@ export function LibraryScreen() {
       openDocument,
       selectedIds,
       selectionMode,
-      tags,
+      swipeArchive,
+      swipeRead,
       toggleFavorite,
       unavailable,
     ]
@@ -304,6 +363,12 @@ export function LibraryScreen() {
    * Kopfzeile, Streifen und Tab-Bar stehen in allen dreien an derselben
    * Stelle; nur der Inhalt darunter wechselt. Genau deshalb springt beim
    * Eintreffen der Daten nichts.
+   */
+  /**
+   * "Leer" heisst weiterhin nur: alles im Papierkorb. Das Archiv zaehlt hier
+   * bewusst NICHT mit — waere ein vollstaendig archivierter Bestand leer,
+   * blendete `chips === 'none'` die Filterleiste aus, und damit waere das
+   * Archiv nicht mehr erreichbar.
    */
   const mode = !hydrated
     ? 'loading'

@@ -104,7 +104,6 @@ export async function documentFrom(
       docType: detectDocType(input.html),
       // Importierte Dokumente landen in "Neu", bis sie einsortiert sind.
       folderName: null,
-      tagIds: [],
       favorite: false,
       cached: true,
       sizeBytes,
@@ -112,8 +111,11 @@ export async function documentFrom(
       importedAt: at,
       openCount: 0,
       // Importieren ist kein Oeffnen: die Zeile steht in der Bibliothek, auf
-      // dem Bildschirm war das Dokument noch nicht.
+      // dem Bildschirm war das Dokument noch nicht. Aus demselben Grund ist
+      // ein frisch importiertes Dokument ungelesen und nicht archiviert.
       lastOpenedAt: null,
+      readAt: null,
+      archivedAt: null,
       note: '',
       keepOffline: false,
       trashedAt: null,

@@ -1,6 +1,6 @@
 /**
  * Was man mit einem Dokument in einer Liste tun kann — Kontextmenue,
- * Verschieben-Sheet, Tag-Sheet und der Toast mit "Rueckgaengig".
+ * Verschieben-Sheet und der Toast mit "Rueckgaengig".
  *
  * Bibliothek (Screen 1) und Ordner-Detail (Screen 4) zeigen dieselbe Liste und
  * brauchen dieselben Griffe. Sie stehen deshalb hier und nicht zweimal in den
@@ -14,18 +14,17 @@
  * selbst liegt weiterhin im Bibliothek-Zustand, weil sie ueber Screens hinweg
  * gilt.
  */
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import type { LibraryTag, StoredDocument } from '../../data/library';
+import { isArchived, isUnread, type StoredDocument } from '../../data/library';
 import { useDocumentStore } from '../../state/documents';
 import { useLibraryStore } from '../../state/library';
 import { size } from '../../theme';
 import { ContextMenu, type ContextMenuItem } from '../../ui/ContextMenu';
-import { Check, FolderOpen, Star, Tag as TagIcon, Trash, type Icon } from '../../ui/icons';
+import { Archive, Check, CheckCircle, FolderOpen, Star, Trash, type Icon } from '../../ui/icons';
 import { Toast } from '../../ui/Toast';
 import { MoveSheet } from '../folders/MoveSheet';
-import { TagSheet } from '../viewer/TagSheet';
 
 /**
  * Was zuletzt geschah — der Toast bietet dafuer 5 Sekunden "Rueckgaengig".
@@ -48,12 +47,14 @@ export interface DocumentActions {
   /** Meldung ohne eigenen Griff, etwa nach einem Import. */
   notify: (undoable: Undoable) => void;
   openMove: () => void;
-  openTag: () => void;
   /**
    * Setzen, nicht umschalten: bei gemischter Auswahl waere ein Umschalten
    * nicht vorhersagbar. Sind schon alle Favorit, nimmt der Griff sie weg.
    */
   toggleFavoriteSelection: () => void;
+  /** Dieselbe Regel fuer den Workflow-Status: sind alle gelesen, werden sie ungelesen. */
+  readSelection: () => void;
+  archiveSelection: () => void;
   trashSelection: (ids: string[]) => void;
 }
 
@@ -61,12 +62,12 @@ export function useDocumentActions(): DocumentActions {
   const insets = useSafeAreaInsets();
 
   const allDocuments = useDocumentStore((state) => state.documents);
-  const tags = useDocumentStore((state) => state.tags);
   const toggleFavorite = useDocumentStore((state) => state.toggleFavorite);
   const setFavorite = useDocumentStore((state) => state.setFavorite);
-  const assignTag = useDocumentStore((state) => state.assignTag);
-  const removeTag = useDocumentStore((state) => state.removeTag);
-  const createTag = useDocumentStore((state) => state.createTag);
+  const setRead = useDocumentStore((state) => state.setRead);
+  const setArchived = useDocumentStore((state) => state.setArchived);
+  const toggleRead = useDocumentStore((state) => state.toggleRead);
+  const toggleArchived = useDocumentStore((state) => state.toggleArchived);
   const trash = useDocumentStore((state) => state.trash);
   const restoreFromTrash = useDocumentStore((state) => state.restoreFromTrash);
   const setFolder = useDocumentStore((state) => state.setFolder);
@@ -75,29 +76,9 @@ export function useDocumentActions(): DocumentActions {
   const startSelection = useLibraryStore((state) => state.startSelection);
   const endSelection = useLibraryStore((state) => state.endSelection);
 
-  const [sheet, setSheet] = useState<null | 'move' | 'tag'>(null);
+  const [sheet, setSheet] = useState<null | 'move'>(null);
   const [menuFor, setMenuFor] = useState<StoredDocument | null>(null);
-  const [tagQuery, setTagQuery] = useState('');
   const [undoable, setUndoable] = useState<Undoable | null>(null);
-
-  /** Tags, die ALLE gewaehlten Dokumente tragen — nur die zeigt das Sheet gesetzt. */
-  const commonTagIds = useMemo(() => {
-    if (selectedIds.length === 0) return [];
-    const selected = allDocuments.filter((document) => selectedIds.includes(document.id));
-    if (selected.length === 0) return [];
-    return selected[0].tagIds.filter((id) =>
-      selected.every((document) => document.tagIds.includes(id))
-    );
-  }, [allDocuments, selectedIds]);
-
-  /** Anzahl der Dokumente je Tag — die Zahl rechts in der Tag-Zeile. */
-  const tagUsage = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const entry of allDocuments) {
-      for (const id of entry.tagIds) counts[id] = (counts[id] ?? 0) + 1;
-    }
-    return counts;
-  }, [allDocuments]);
 
   const trashSelection = useCallback(
     (ids: string[]) => {
@@ -124,27 +105,33 @@ export function useDocumentActions(): DocumentActions {
     });
   }, [allDocuments, selectedIds, setFavorite]);
 
-  const toggleBulkTag = useCallback(
-    (tag: LibraryTag) => {
-      const all = selectedIds.every((id) =>
-        allDocuments.find((document) => document.id === id)?.tagIds.includes(tag.id)
-      );
-      for (const id of selectedIds) {
-        if (all) removeTag(id, tag.id);
-        else assignTag(id, tag.id);
-      }
-      setUndoable({
-        message: all ? `Tag „${tag.name}“ entfernt` : `Tag „${tag.name}“ gesetzt`,
-        undo: () => {
-          for (const id of selectedIds) {
-            if (all) assignTag(id, tag.id);
-            else removeTag(id, tag.id);
-          }
-        },
-      });
-    },
-    [allDocuments, assignTag, removeTag, selectedIds]
-  );
+  const readSelection = useCallback(() => {
+    const ids = [...selectedIds];
+    const allRead = ids.every(
+      (id) => allDocuments.find((document) => document.id === id)?.readAt !== null
+    );
+    setRead(ids, !allRead);
+    endSelection();
+    setUndoable({
+      message: allRead ? 'Als ungelesen markiert' : 'Als gelesen markiert',
+      icon: CheckCircle,
+      undo: () => setRead(ids, allRead),
+    });
+  }, [allDocuments, endSelection, selectedIds, setRead]);
+
+  const archiveSelection = useCallback(() => {
+    const ids = [...selectedIds];
+    const allArchived = ids.every(
+      (id) => allDocuments.find((document) => document.id === id)?.archivedAt !== null
+    );
+    setArchived(ids, !allArchived);
+    endSelection();
+    setUndoable({
+      message: allArchived ? 'Aus dem Archiv geholt' : 'Archiviert',
+      icon: Archive,
+      undo: () => setArchived(ids, allArchived),
+    });
+  }, [allDocuments, endSelection, selectedIds, setArchived]);
 
   const menuItems: ContextMenuItem[] =
     menuFor === null
@@ -170,13 +157,35 @@ export function useDocumentActions(): DocumentActions {
             },
           },
           {
-            key: 'tag',
-            label: 'Taggen',
-            icon: TagIcon,
+            key: 'read',
+            label: isUnread(menuFor) ? 'Als gelesen markieren' : 'Als ungelesen markieren',
+            icon: CheckCircle,
             onPress: () => {
-              startSelection(menuFor.id);
+              const { id } = menuFor;
+              const wasUnread = isUnread(menuFor);
+              toggleRead(id);
               setMenuFor(null);
-              setSheet('tag');
+              setUndoable({
+                message: wasUnread ? 'Als gelesen markiert' : 'Als ungelesen markiert',
+                icon: CheckCircle,
+                undo: () => setRead([id], !wasUnread),
+              });
+            },
+          },
+          {
+            key: 'archive',
+            label: isArchived(menuFor) ? 'Aus dem Archiv holen' : 'Archivieren',
+            icon: Archive,
+            onPress: () => {
+              const { id } = menuFor;
+              const wasArchived = isArchived(menuFor);
+              toggleArchived(id);
+              setMenuFor(null);
+              setUndoable({
+                message: wasArchived ? 'Aus dem Archiv geholt' : 'Archiviert',
+                icon: Archive,
+                undo: () => setArchived([id], wasArchived),
+              });
             },
           },
           {
@@ -222,41 +231,12 @@ export function useDocumentActions(): DocumentActions {
         }}
       />
 
-      <TagSheet
-        visible={sheet === 'tag'}
-        as="modal"
-        title={
-          selectedIds.length === 1 ? 'Tag zuweisen' : `Tags für ${selectedIds.length} Dokumente`
-        }
-        query={tagQuery}
-        onChangeQuery={setTagQuery}
-        tags={tags}
-        assigned={commonTagIds}
-        usage={tagUsage}
-        onToggle={toggleBulkTag}
-        onCreate={(name) => {
-          const tag = createTag(name);
-          for (const id of selectedIds) assignTag(id, tag.id);
-          setTagQuery('');
-          setUndoable({
-            message: `Tag „${tag.name}“ gesetzt`,
-            undo: () => {
-              for (const id of selectedIds) removeTag(id, tag.id);
-            },
-          });
-        }}
-        onRemove={(tagId) => {
-          for (const id of selectedIds) removeTag(id, tagId);
-        }}
-        onClose={() => setSheet(null)}
-      />
-
       <ContextMenu visible={menuFor !== null} items={menuItems} onClose={() => setMenuFor(null)} />
 
       <Toast
         visible={undoable !== null}
         message={undoable?.message ?? ''}
-        icon={undoable?.icon ?? TagIcon}
+        icon={undoable?.icon ?? Check}
         actionLabel={undoable?.undo ? 'Rückgängig' : undefined}
         onAction={() => {
           undoable?.undo?.();
@@ -273,8 +253,9 @@ export function useDocumentActions(): DocumentActions {
     overlays,
     notify: setUndoable,
     openMove: () => setSheet('move'),
-    openTag: () => setSheet('tag'),
     toggleFavoriteSelection,
+    readSelection,
+    archiveSelection,
     trashSelection,
   };
 }

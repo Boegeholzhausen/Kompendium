@@ -13,7 +13,7 @@
  * beheben kann.
  */
 import { TRASH_DAYS, type StoredDocument } from '../data/library';
-import { expiredTrashIds, loadSnapshot } from '../data/db/repository';
+import { countOutbox, expiredTrashIds, loadSnapshot } from '../data/db/repository';
 import { warmSearchIndex } from '../data/search';
 import { useAppearanceStore } from './appearance';
 import { purgeDocuments, useDocumentStore } from './documents';
@@ -54,6 +54,22 @@ async function purgeExpiredTrash(documents: StoredDocument[]): Promise<StoredDoc
 }
 
 /**
+ * Den Anfangsstatus des Abgleichs setzen.
+ *
+ * Nebenlaeufig zum Verteilen des Snapshots: die Bibliothek soll nicht auf eine
+ * Zaehlung warten, die nur einen Streifen am oberen Rand betrifft. Faellt sie
+ * aus, bleibt `pending` stehen — die vorsichtigere der beiden Aussagen.
+ */
+async function setInitialSyncStatus(): Promise<void> {
+  try {
+    const open = await countOutbox();
+    useSyncStore.getState().setStatus(open === 0 ? 'idle' : 'pending');
+  } catch (error: unknown) {
+    console.warn('[kompendium] Offene Aenderungen liessen sich nicht zaehlen:', error);
+  }
+}
+
+/**
  * Der Lauf selbst. `hydrateStores` fuehrt ihn genau einmal aus,
  * `reloadStores` erzwingt ihn erneut — nach einem Abgleich, der etwas
  * gebracht hat.
@@ -63,7 +79,7 @@ function readAndDistribute(): Promise<void> {
     try {
       const snapshot = await loadSnapshot();
       const documents = await purgeExpiredTrash(snapshot.documents);
-      useDocumentStore.getState().hydrate(documents, snapshot.tags);
+      useDocumentStore.getState().hydrate(documents);
       useFolderStore.getState().hydrate(snapshot.folders);
       useLibraryStore.getState().hydrate(snapshot.settings);
       useAppearanceStore.getState().hydrate(snapshot.settings);
@@ -75,17 +91,17 @@ function readAndDistribute(): Promise<void> {
         snapshot.settings,
         documents.map((document) => document.id)
       );
-      // Der Sync-Zustand startet auf `pending` — offene Aenderungen der
-      // letzten Sitzung. Auf einer leeren Bibliothek waere das eine
-      // Falschaussage: es gibt nichts, was offen sein koennte, und die
-      // gelbe Leiste stuende ausgerechnet auf dem Erststart-Screen.
-      if (documents.length === 0) useSyncStore.getState().setStatus('idle');
+      // Der Sync-Zustand startet auf `pending`; hier bekommt er zum ersten Mal
+      // eine Auskunft statt einer Annahme — dasselbe Mass wie am Ende von
+      // `sync()`. Eine leere Outbox heisst: die letzte Sitzung ist vollstaendig
+      // oben angekommen, und die gelbe Leiste haette nichts zu melden.
+      void setInitialSyncStatus();
       // Der Suchindex laeuft im Hintergrund warm: der erste Screen soll
       // nicht auf Dateien warten, die erst beim Suchen gebraucht werden.
       void warmSearchIndex(documents);
     } catch (error: unknown) {
       console.warn('[kompendium] Datenbank liess sich nicht lesen:', error);
-      useDocumentStore.getState().hydrate([], []);
+      useDocumentStore.getState().hydrate([]);
       useSyncStore.getState().setStatus('idle');
     }
   })();

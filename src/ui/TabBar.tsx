@@ -1,14 +1,15 @@
 /**
  * 14 · Tab-Bar · 17 · Auswahl-Aktionsleiste.
  *
- * Beide sitzen an derselben Stelle und tragen dieselbe Form: vier gleiche
+ * Beide sitzen an derselben Stelle und tragen dieselbe Form: gleich breite
  * Spalten, Icon 24 + `caption`, `gap 4`. Die Auswahlleiste liegt eine
  * Flaechenstufe hoeher (`bg/raised` + `border/strong`), damit der Moduswechsel
  * auch unten sichtbar ist, behaelt aber Icon UND Beschriftung — sonst wirkte
  * er wie ein anderes Bedienmodell.
  *
- * Vier Ziele: Bibliothek, Ordner, Tags, Einstellungen. Suchscreen und Viewer
- * zeigen keine Tab-Bar.
+ * Drei Ziele: Bibliothek, Ordner, Einstellungen — die Auswahlleiste traegt
+ * daneben vier Spalten (Verschieben, Gelesen, Archiv, Loeschen). Suchscreen
+ * und Viewer zeigen keine Tab-Bar.
  */
 import React from 'react';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
@@ -23,7 +24,7 @@ export interface TabItem {
   key: string;
   label: string;
   icon: Icon;
-  /** Ohne Dokumente fuehren Ordner und Tags nur in weitere leere Screens. */
+  /** Ohne Dokumente fuehrt Ordner nur in einen weiteren leeren Screen. */
   disabled?: boolean;
 }
 

@@ -5,7 +5,7 @@
  *
  *   `TitleHeader`    Titel als `display`, rechts eine Schaltflaeche oder eine
  *                    sekundaere Pille. Innenabstand 8 / 16 / 12 wie in `3a`
- *                    (Ordner) und `3f` (Tags).
+ *                    (Ordner).
  *   `CompactHeader`  56 hoch, Zurueck-Pfeil links, optional Titel als `title`,
  *                    rechts eine Schaltflaeche. So in `3b` (Ordner-Detail, ohne
  *                    Titel) und `6a` (Papierkorb, mit Titel).

@@ -12,7 +12,6 @@ export { BooksIcon as Books } from 'phosphor-react-native/src/icons/Books';
 export { FoldersIcon as Folders } from 'phosphor-react-native/src/icons/Folders';
 export { FolderIcon as Folder } from 'phosphor-react-native/src/icons/Folder';
 export { FolderOpenIcon as FolderOpen } from 'phosphor-react-native/src/icons/FolderOpen';
-export { TagIcon as Tag } from 'phosphor-react-native/src/icons/Tag';
 export { GearIcon as Gear } from 'phosphor-react-native/src/icons/Gear';
 export { PlusIcon as Plus } from 'phosphor-react-native/src/icons/Plus';
 export { MagnifyingGlassIcon as MagnifyingGlass } from 'phosphor-react-native/src/icons/MagnifyingGlass';
@@ -30,6 +29,12 @@ export { ArrowsDownUpIcon as ArrowsDownUp } from 'phosphor-react-native/src/icon
 export { RowsIcon as Rows } from 'phosphor-react-native/src/icons/Rows';
 export { SquaresFourIcon as SquaresFour } from 'phosphor-react-native/src/icons/SquaresFour';
 export { StarIcon as Star } from 'phosphor-react-native/src/icons/Star';
+// Workflow-Status: `Circle` gefuellt fuer ungelesen, `CheckCircle` fuer
+// gelesen, `Archive` fuer die zweite Achse. Die Dateinamen unter
+// `phosphor-react-native/src/icons/` heissen genau so.
+export { ArchiveIcon as Archive } from 'phosphor-react-native/src/icons/Archive';
+export { CircleIcon as Circle } from 'phosphor-react-native/src/icons/Circle';
+export { CheckCircleIcon as CheckCircle } from 'phosphor-react-native/src/icons/CheckCircle';
 export { ShareNetworkIcon as ShareNetwork } from 'phosphor-react-native/src/icons/ShareNetwork';
 export { InfoIcon as Info } from 'phosphor-react-native/src/icons/Info';
 export { DotsThreeVerticalIcon as DotsThreeVertical } from 'phosphor-react-native/src/icons/DotsThreeVertical';

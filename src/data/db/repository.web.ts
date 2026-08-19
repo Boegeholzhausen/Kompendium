@@ -25,15 +25,14 @@
  * oder nur fuer eine halbe Sekunde gibt, die einzigen, die nie jemand
  * nachsieht.
  */
-import { libraryTags, seedFolders, seedLibrary } from '../sampleLibrary';
-import type { LibraryFolder, LibraryTag, StoredDocument } from '../library';
+import { seedFolders, seedLibrary } from '../sampleLibrary';
+import type { LibraryFolder, StoredDocument } from '../library';
 import type { DocumentPatch, Snapshot } from './repository';
 
 export type { DocumentPatch, Snapshot } from './repository';
 
 const documents = new Map<string, StoredDocument>();
 const folders: LibraryFolder[] = [];
-const tags: LibraryTag[] = [];
 const settings: Record<string, string> = {};
 
 let seeded = false;
@@ -50,7 +49,6 @@ function seed(): void {
   if (param('bestand') === 'leer') return;
   for (const document of seedLibrary) documents.set(document.id, { ...document });
   folders.push(...seedFolders.map((folder) => ({ ...folder })));
-  tags.push(...libraryTags.map((tag) => ({ ...tag })));
 }
 
 export async function loadSnapshot(): Promise<Snapshot> {
@@ -61,7 +59,6 @@ export async function loadSnapshot(): Promise<Snapshot> {
   return {
     documents: [...documents.values()].map((document) => ({ ...document })),
     folders: folders.map((folder) => ({ ...folder })),
-    tags: tags.map((tag) => ({ ...tag })),
     settings: { ...settings },
   };
 }
@@ -77,12 +74,6 @@ export async function updateDocuments(ids: string[], patch: DocumentPatch): Prom
     if (current === undefined) continue;
     documents.set(id, { ...current, ...patch });
   }
-}
-
-export async function setDocumentTags(documentId: string, tagIds: string[]): Promise<void> {
-  const current = documents.get(documentId);
-  if (current === undefined) return;
-  documents.set(documentId, { ...current, tagIds: [...tagIds] });
 }
 
 export async function expiredTrashIds(
@@ -120,22 +111,16 @@ export async function deleteFolder(name: string): Promise<void> {
   }
 }
 
-export async function upsertTag(tag: LibraryTag): Promise<void> {
-  const at = tags.findIndex((entry) => entry.id === tag.id);
-  if (at === -1) tags.push({ ...tag });
-  else tags[at] = { ...tag };
-}
-
-export async function deleteTag(tagId: string): Promise<void> {
-  const at = tags.findIndex((entry) => entry.id === tagId);
-  if (at !== -1) tags.splice(at, 1);
-  for (const [id, document] of documents) {
-    if (document.tagIds.includes(tagId)) {
-      documents.set(id, { ...document, tagIds: document.tagIds.filter((entry) => entry !== tagId) });
-    }
-  }
-}
-
 export async function setSetting(key: string, value: string): Promise<void> {
   settings[key] = value;
+}
+
+/**
+ * Im Web-Bild gibt es nichts hochzuschicken: `pull.web.ts` und `push.web.ts`
+ * tun beide nichts, und ein Bestand im Arbeitsspeicher ueberlebt den naechsten
+ * Seitenaufruf nicht. Die Null haelt den Abgleich damit auf "Synchron" —
+ * ehrlicher als "Änderungen offen" fuer einen Weg, den es hier nicht gibt.
+ */
+export async function countOutbox(): Promise<number> {
+  return 0;
 }

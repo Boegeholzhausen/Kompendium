@@ -39,11 +39,10 @@ export const periodDays: Record<PeriodKey, number> = {
 
 export interface SearchFilters {
   folderName: string | null;
-  tagIds: string[];
   period: PeriodKey | null;
 }
 
-const noFilters: SearchFilters = { folderName: null, tagIds: [], period: null };
+const noFilters: SearchFilters = { folderName: null, period: null };
 
 interface SearchState {
   /** Was im Feld steht. */
@@ -65,7 +64,6 @@ interface SearchState {
   clearRecent: () => void;
 
   setFolderFilter: (folderName: string | null) => void;
-  toggleTagFilter: (tagId: string) => void;
   setPeriod: (period: PeriodKey | null) => void;
   resetFilters: () => void;
 }
@@ -126,16 +124,6 @@ export const useSearchStore = create<SearchState>((set) => ({
   setFolderFilter: (folderName) =>
     set((state) => ({ filters: { ...state.filters, folderName } })),
 
-  toggleTagFilter: (tagId) =>
-    set((state) => ({
-      filters: {
-        ...state.filters,
-        tagIds: state.filters.tagIds.includes(tagId)
-          ? state.filters.tagIds.filter((entry) => entry !== tagId)
-          : [...state.filters.tagIds, tagId],
-      },
-    })),
-
   setPeriod: (period) => set((state) => ({ filters: { ...state.filters, period } })),
 
   resetFilters: () => set({ filters: noFilters }),
@@ -144,8 +132,6 @@ export const useSearchStore = create<SearchState>((set) => ({
 /** Wie viele Filter gerade greifen — die Leerdarstellung nennt die Zahl. */
 export function activeFilterCount(filters: SearchFilters): number {
   return (
-    (filters.folderName === null ? 0 : 1) +
-    (filters.period === null ? 0 : 1) +
-    filters.tagIds.length
+    (filters.folderName === null ? 0 : 1) + (filters.period === null ? 0 : 1)
   );
 }

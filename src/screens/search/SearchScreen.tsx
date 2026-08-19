@@ -54,17 +54,15 @@ import {
   ClockCounterClockwise,
   Folder,
   MagnifyingGlass,
-  Tag as TagIcon,
 } from '../../ui/icons';
 import { IconButton } from '../../ui/IconButton';
 import { PressableScale } from '../../ui/press';
 import { SearchField } from '../../ui/SearchField';
 import { SectionHeader } from '../../ui/SectionHeader';
-import { TagChip } from '../../ui/TagChip';
 import { Text } from '../../ui/Text';
 import { ResultRow } from './ResultRow';
 
-type OpenSheet = null | 'folder' | 'tags' | 'period';
+type OpenSheet = null | 'folder' | 'period';
 
 /** Chip aus Blatt `3c`: Hoehe 40, Uhr-Icon 16 und der Begriff in `body`. */
 function RecentChip({ label, onPress }: { label: string; onPress: () => void }) {
@@ -100,19 +98,17 @@ export function SearchScreen() {
   const clear = useSearchStore((state) => state.clear);
   const clearRecent = useSearchStore((state) => state.clearRecent);
   const setFolderFilter = useSearchStore((state) => state.setFolderFilter);
-  const toggleTagFilter = useSearchStore((state) => state.toggleTagFilter);
   const setPeriod = useSearchStore((state) => state.setPeriod);
   const resetFilters = useSearchStore((state) => state.resetFilters);
 
-  const tags = useDocumentStore((state) => state.tags);
   const documents = useDocumentStore((state) => state.documents);
   const folders = useFolderStore((state) => state.folders);
 
   const [sheet, setSheet] = useState<OpenSheet>(null);
 
   const input: SearchInput = useMemo(
-    () => ({ query: submitted, filters, documents, tags }),
-    [submitted, filters, documents, tags]
+    () => ({ query: submitted, filters, documents }),
+    [submitted, filters, documents]
   );
 
   const results = useMemo(() => searchDocuments(input), [input]);
@@ -147,23 +143,10 @@ export function SearchScreen() {
     dotColor: folder.color,
   }));
 
-  const tagOptions: ChoiceOption[] = tags.map((tag) => ({
-    key: tag.id,
-    label: tag.name,
-    dotColor: tag.color,
-  }));
-
   const periodOptions: ChoiceOption[] = (Object.keys(periodLabels) as PeriodKey[]).map((key) => ({
     key,
     label: periodLabels[key],
   }));
-
-  const selectedTagLabel =
-    filters.tagIds.length === 0
-      ? 'Tags'
-      : filters.tagIds.length === 1
-        ? (tags.find((tag) => tag.id === filters.tagIds[0])?.name ?? 'Tags')
-        : `Tags · ${filters.tagIds.length}`;
 
   /**
    * Der Begriff faehrt als Adressparameter mit: der Viewer sucht ihn nach dem
@@ -214,18 +197,6 @@ export function SearchScreen() {
             }
           />
           <FilterChip
-            label={selectedTagLabel}
-            icon={TagIcon}
-            active={filters.tagIds.length > 0}
-            dropdown={filters.tagIds.length === 0}
-            removable={filters.tagIds.length > 0}
-            onPress={() =>
-              filters.tagIds.length === 0
-                ? setSheet('tags')
-                : filters.tagIds.forEach((id) => toggleTagFilter(id))
-            }
-          />
-          <FilterChip
             label={filters.period === null ? 'Zeitraum' : periodLabels[filters.period]}
             icon={CalendarBlank}
             active={filters.period !== null}
@@ -271,25 +242,6 @@ export function SearchScreen() {
               />
             </>
           ) : null}
-
-          <Text variant="overline" tone="tertiary" style={styles.tagsLabel}>
-            Nach Tag suchen
-          </Text>
-          <View style={styles.chips}>
-            {tags.map((tag) => (
-              <TagChip
-                key={tag.id}
-                label={tag.name}
-                color={tag.color}
-                large
-                onPress={() => {
-                  toggleTagFilter(tag.id);
-                  setQuery(tag.name);
-                  submit(tag.name);
-                }}
-              />
-            ))}
-          </View>
         </ScrollView>
       ) : results.length > 0 ? (
         <ScrollView
@@ -355,15 +307,6 @@ export function SearchScreen() {
         onClose={() => setSheet(null)}
       />
       <ChoiceSheet
-        visible={sheet === 'tags'}
-        title="Tags"
-        options={tagOptions}
-        value={filters.tagIds}
-        multiple
-        onSelect={toggleTagFilter}
-        onClose={() => setSheet(null)}
-      />
-      <ChoiceSheet
         visible={sheet === 'period'}
         title="Zeitraum"
         options={periodOptions}
@@ -422,9 +365,6 @@ const styles = StyleSheet.create({
   clearRecent: {
     alignSelf: 'flex-start',
     marginTop: space['8'],
-  },
-  tagsLabel: {
-    marginTop: space['24'],
   },
   recentChip: {
     flexDirection: 'row',

@@ -1,5 +1,5 @@
 /**
- * Tab-Rahmen — vier Ziele: Bibliothek, Ordner, Tags, Einstellungen.
+ * Tab-Rahmen — drei Ziele: Bibliothek, Ordner, Einstellungen.
  *
  * Die Tab-Bar ist die Komponente 14 aus Schritt 3, nicht die eingebaute:
  * Flaechen, Schriftschnitte und der `fill`-Wechsel des aktiven Icons stecken
@@ -21,13 +21,12 @@ import { Tabs } from 'expo-router/js-tabs';
 import { useDocumentStore } from '../../src/state/documents';
 import { useLibraryStore } from '../../src/state/library';
 import { bg } from '../../src/theme/colors';
-import { Books, FolderOpen, Folders, Gear, Star, Tag, Trash } from '../../src/ui/icons';
+import { Archive, Books, CheckCircle, FolderOpen, Folders, Gear, Trash } from '../../src/ui/icons';
 import { SelectionBar, TabBar, type TabItem } from '../../src/ui/TabBar';
 
 const items: TabItem[] = [
   { key: 'index', label: 'Bibliothek', icon: Books },
   { key: 'ordner', label: 'Ordner', icon: Folders },
-  { key: 'tags', label: 'Tags', icon: Tag },
   { key: 'einstellungen', label: 'Einstellungen', icon: Gear },
 ];
 
@@ -36,13 +35,13 @@ export default function TabsLayout() {
   const setRequest = useLibraryStore((state) => state.setRequest);
 
   /**
-   * Leere Bibliothek (Blatt `4a`): Ordner und Tags stehen in `text/tertiary`
-   * und sind nicht anwaehlbar — ohne Dokumente fuehren sie nur in weitere
-   * leere Screens. Einstellungen bleibt erreichbar, dort gibt es auch ohne
-   * Bestand etwas zu tun.
+   * Leere Bibliothek (Blatt `4a`): Ordner steht in `text/tertiary` und ist
+   * nicht anwaehlbar — ohne Dokumente fuehrt es nur in einen weiteren leeren
+   * Screen. Einstellungen bleibt erreichbar, dort gibt es auch ohne Bestand
+   * etwas zu tun.
    *
    * Erst nach dem Lesen der Datenbank: bis dahin ist die Bibliothek nicht
-   * leer, sondern unbekannt (Blatt `4b` zeigt alle vier Ziele normal).
+   * leer, sondern unbekannt (Blatt `4b` zeigt alle Ziele normal).
    */
   const hydrated = useDocumentStore((state) => state.hydrated);
   const documents = useDocumentStore((state) => state.documents);
@@ -64,12 +63,15 @@ export default function TabsLayout() {
                 icon: FolderOpen,
                 onPress: () => setRequest('move'),
               },
-              { key: 'tag', label: 'Taggen', icon: Tag, onPress: () => setRequest('tag') },
+              // Statt "Taggen" der Workflow-Status. Der Favorit faellt hier
+              // weg — vier Spalten, und er ist ueber das Kontextmenue und den
+              // Stern in der Zeile ohnehin naeher (Abweichung von Blatt `3h`).
+              { key: 'read', label: 'Gelesen', icon: CheckCircle, onPress: () => setRequest('read') },
               {
-                key: 'favorite',
-                label: 'Favorit',
-                icon: Star,
-                onPress: () => setRequest('favorite'),
+                key: 'archive',
+                label: 'Archiv',
+                icon: Archive,
+                onPress: () => setRequest('archive'),
               },
               {
                 key: 'trash',
@@ -83,9 +85,7 @@ export default function TabsLayout() {
         ) : (
           <TabBar
             items={items.map((item) =>
-              empty && (item.key === 'ordner' || item.key === 'tags')
-                ? { ...item, disabled: true }
-                : item
+              empty && item.key === 'ordner' ? { ...item, disabled: true } : item
             )}
             value={state.routes[state.index]?.name ?? 'index'}
             onChange={(key) => navigation.navigate(key)}

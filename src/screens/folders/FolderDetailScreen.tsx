@@ -31,12 +31,12 @@ import { useRouter } from 'expo-router';
 import { formatBytes, formatDocumentMeta } from '../../data/format';
 import type { StoredDocument } from '../../data/library';
 import { useGuardedPush } from '../../navigation/useGuardedPush';
-import { documentTags, useDocumentStore } from '../../state/documents';
+import { isUnread, isVisible, useDocumentStore } from '../../state/documents';
 import { colorOf, useFolderStore } from '../../state/folders';
 import { isAllSelected, sortDocuments, sortLabels, useLibraryStore } from '../../state/library';
 import { useUnavailable } from '../../state/network';
 import { useSearchStore } from '../../state/search';
-import { bg, size, space } from '../../theme';
+import { accent, bg, size, space, text as textColor } from '../../theme';
 import { SecondaryButton } from '../../ui/Button';
 import { ContextMenu, type ContextMenuItem } from '../../ui/ContextMenu';
 import { DocCard } from '../../ui/DocCard';
@@ -47,6 +47,9 @@ import {
   Books,
   CloudCheck,
   CloudSlash,
+  Archive,
+  CheckCircle,
+  Circle,
   DotsThreeVertical,
   DownloadSimple,
   FileHtml,
@@ -55,8 +58,6 @@ import {
   PencilSimple,
   Rows,
   SquaresFour,
-  Star,
-  Tag as TagIcon,
   Trash,
   WarningCircle,
 } from '../../ui/icons';
@@ -64,6 +65,7 @@ import { IconButton } from '../../ui/IconButton';
 import { RenameSheet } from '../../ui/RenameSheet';
 import { CompactHeader } from '../../ui/ScreenHeader';
 import { SearchField } from '../../ui/SearchField';
+import { SwipeActions } from '../../ui/SwipeActions';
 import { SectionHeader } from '../../ui/SectionHeader';
 import { SelectionBar } from '../../ui/TabBar';
 import { Text } from '../../ui/Text';
@@ -91,11 +93,14 @@ export function FolderDetailScreen({ folderName, onBack }: FolderDetailScreenPro
   const setFolderOffline = useFolderStore((state) => state.setKeepOffline);
 
   const allDocuments = useDocumentStore((state) => state.documents);
-  const tags = useDocumentStore((state) => state.tags);
   const renameFolderEverywhere = useDocumentStore((state) => state.renameFolderEverywhere);
   const clearFolderEverywhere = useDocumentStore((state) => state.clearFolderEverywhere);
   const setFolder = useDocumentStore((state) => state.setFolder);
   const toggleFavorite = useDocumentStore((state) => state.toggleFavorite);
+  const toggleRead = useDocumentStore((state) => state.toggleRead);
+  const toggleArchived = useDocumentStore((state) => state.toggleArchived);
+  const setRead = useDocumentStore((state) => state.setRead);
+  const setArchived = useDocumentStore((state) => state.setArchived);
   const trashDocuments = useDocumentStore((state) => state.trash);
   const setDocumentsKeepOffline = useDocumentStore((state) => state.setDocumentsKeepOffline);
 
@@ -112,7 +117,7 @@ export function FolderDetailScreen({ folderName, onBack }: FolderDetailScreenPro
   const setFolderFilter = useSearchStore((state) => state.setFolderFilter);
 
   /**
-   * Kontextmenue, Verschieben, Taggen und der Toast — dasselbe Modul wie in
+   * Kontextmenue, Verschieben, Status und der Toast — dasselbe Modul wie in
    * der Bibliothek. Hier wird aufgeraeumt, also muss es hier dieselben Griffe
    * geben.
    */
@@ -150,7 +155,10 @@ export function FolderDetailScreen({ folderName, onBack }: FolderDetailScreenPro
 
   const documents = useMemo(() => {
     const list = allDocuments.filter((document) => {
-      if (document.trashedAt !== null) return false;
+      // Dieselbe Sichtbarkeitsregel wie in der Bibliothek: kein Papierkorb und
+      // kein Archiv. Das Archiv ist ueber den Chip der Bibliothek erreichbar,
+      // hier waere es eine zweite, abweichende Antwort auf dieselbe Frage.
+      if (!isVisible(document)) return false;
       if (isAll) return true;
       return document.folderName === folderName;
     });
@@ -175,7 +183,7 @@ export function FolderDetailScreen({ folderName, onBack }: FolderDetailScreenPro
    *
    * Wer den Ordner zurueckholt, will ihn samt Inhalt zurueck. Welche Dokumente
    * darin lagen, muss deshalb VOR dem Loeschen feststehen — danach ist es nicht
-   * mehr zu ermitteln (dasselbe Muster wie `TagsScreen.remove`). Der Toast
+   * mehr zu ermitteln. Der Toast
    * dazu steht in der Ordner-Uebersicht, weil dieser Screen im selben Moment
    * schliesst (siehe `PendingUndo` in `state/folders.ts`).
    */
@@ -314,6 +322,32 @@ export function FolderDetailScreen({ folderName, onBack }: FolderDetailScreenPro
   /** Nicht geladen UND kein Netz (Blatt `4c`) — siehe `data/library`. */
   const unavailable = useUnavailable();
 
+  /**
+   * Was die beiden Wischrichtungen tun — wortgleich zur Bibliothek. Beide mit
+   * Toast und "Rueckgaengig": eine Geste loest sich leichter versehentlich aus
+   * als ein Menueeintrag.
+   */
+  const swipeArchive = (document: StoredDocument) => {
+    toggleArchived(document.id);
+    actions.notify({
+      message: 'Archiviert',
+      icon: Archive,
+      // Hier steht nie ein archiviertes Dokument (`isVisible` blendet es aus),
+      // deshalb geht es immer nur in eine Richtung.
+      undo: () => setArchived([document.id], false),
+    });
+  };
+
+  const swipeRead = (document: StoredDocument) => {
+    const wasUnread = isUnread(document);
+    toggleRead(document.id);
+    actions.notify({
+      message: wasUnread ? 'Als gelesen markiert' : 'Als ungelesen markiert',
+      icon: CheckCircle,
+      undo: () => setRead([document.id], !wasUnread),
+    });
+  };
+
   const renderItem = ({ item, index }: ListRenderItemInfo<StoredDocument>) => {
     // Im Auswahlmodus waehlt derselbe Tipp aus, statt zu oeffnen — wie in der
     // Bibliothek.
@@ -333,6 +367,7 @@ export function FolderDetailScreen({ folderName, onBack }: FolderDetailScreenPro
           type={item.docType}
           folderName={item.folderName}
           favorite={item.favorite}
+          unread={isUnread(item)}
           unavailable={unavailable(item)}
           state={unavailable(item) ? 'unavailable' : 'default'}
           onPress={open}
@@ -343,7 +378,25 @@ export function FolderDetailScreen({ folderName, onBack }: FolderDetailScreenPro
     }
 
     return (
-      <View style={styles.rowWrap}>
+      // Dieselbe Abkuerzung wie in der Bibliothek — und dieselben Aktionen
+      // ohne Geste im Kontextmenue und in der Auswahl-Aktionsleiste.
+      <SwipeActions
+        style={styles.rowWrap}
+        right={{
+          icon: Archive,
+          label: 'Archiv',
+          surface: bg.raised,
+          tint: textColor.primary,
+          onTrigger: () => swipeArchive(item),
+        }}
+        left={{
+          icon: isUnread(item) ? CheckCircle : Circle,
+          label: isUnread(item) ? 'Gelesen' : 'Ungelesen',
+          surface: accent.surface,
+          tint: accent.base,
+          onTrigger: () => swipeRead(item),
+        }}
+      >
         <DocRow
           id={item.id}
           title={item.title}
@@ -356,7 +409,7 @@ export function FolderDetailScreen({ folderName, onBack }: FolderDetailScreenPro
           // Offline gehaltene Dokumente zeigen es mit Wolkensymbol UND Wort,
           // nie durch Farbe allein.
           metaIcon={item.keepOffline && item.cached ? CloudCheck : undefined}
-          tagColors={documentTags(tags, item.tagIds).map((tag) => tag.color)}
+          unread={isUnread(item)}
           favorite={item.favorite}
           unavailable={unavailable(item)}
           selectionMode={selectionMode}
@@ -366,7 +419,7 @@ export function FolderDetailScreen({ folderName, onBack }: FolderDetailScreenPro
           onLongPress={selectionMode ? undefined : () => actions.openMenu(item)}
           onToggleFavorite={() => toggleFavorite(item.id)}
         />
-      </View>
+      </SwipeActions>
     );
   };
 
@@ -435,12 +488,14 @@ export function FolderDetailScreen({ folderName, onBack }: FolderDetailScreenPro
               icon: FolderOpen,
               onPress: actions.openMove,
             },
-            { key: 'tag', label: 'Taggen', icon: TagIcon, onPress: actions.openTag },
+            // Wie in der Bibliothek: statt "Taggen" der Workflow-Status, und der
+            // Favorit weicht in das Kontextmenue aus (Abweichung von Blatt `3h`).
+            { key: 'read', label: 'Gelesen', icon: CheckCircle, onPress: actions.readSelection },
             {
-              key: 'favorite',
-              label: 'Favorit',
-              icon: Star,
-              onPress: actions.toggleFavoriteSelection,
+              key: 'archive',
+              label: 'Archiv',
+              icon: Archive,
+              onPress: actions.archiveSelection,
             },
             {
               key: 'trash',

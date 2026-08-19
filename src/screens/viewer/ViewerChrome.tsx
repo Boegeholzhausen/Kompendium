@@ -29,7 +29,15 @@ import {
   text as textColor,
 } from '../../theme';
 import { useReduceMotion } from '../../theme/useReduceMotion';
-import { ArrowLeft, DotsThreeVertical, Info, ShareNetwork, Star, Tag, type Icon } from '../../ui/icons';
+import {
+  Archive,
+  ArrowLeft,
+  DotsThreeVertical,
+  Info,
+  ShareNetwork,
+  Star,
+  type Icon,
+} from '../../ui/icons';
 import { PressableScale } from '../../ui/press';
 import { Text } from '../../ui/Text';
 import { ACTION_BAR_WIDTH, HEADER_ROW } from './metrics';
@@ -152,14 +160,16 @@ export interface ViewerActionBarProps {
   bottom: number;
   favorite: boolean;
   onToggleFavorite: () => void;
-  onTags: () => void;
+  onArchive: () => void;
+  /** Zustand der zweiten Achse — die Spalte zeigt ihn wie der Favorit an. */
+  archived: boolean;
   onShare: () => void;
   onInfo: () => void;
 }
 
 /**
  * Schwebender Aktionsbalken: Hoehe 60, `radius pill`, 16 ueber der Safe Area
- * zentriert. Vier Spalten zu 64 — Favorit, Tags, Teilen, Info.
+ * zentriert. Vier Spalten zu 64 — Favorit, Archiv, Teilen, Info.
  *
  * Die Beschriftungen unter den Icons sind eine Abweichung vom sonst
  * icon-only-Muster und ausdruecklich gewollt: vier Symbole ohne Text sind im
@@ -171,7 +181,8 @@ export function ViewerActionBar({
   bottom,
   favorite,
   onToggleFavorite,
-  onTags,
+  onArchive,
+  archived,
   onShare,
   onInfo,
 }: ViewerActionBarProps) {
@@ -190,7 +201,7 @@ export function ViewerActionBar({
           active={favorite}
           onPress={onToggleFavorite}
         />
-        <BarAction icon={Tag} label="Tags" onPress={onTags} />
+        <BarAction icon={Archive} label="Archiv" active={archived} onPress={onArchive} />
         <BarAction icon={ShareNetwork} label="Teilen" onPress={onShare} />
         <BarAction icon={Info} label="Info" onPress={onInfo} />
       </View>

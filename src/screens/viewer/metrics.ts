@@ -22,10 +22,3 @@ export const ACTION_BAR_WIDTH = 4 * size.viewerActionBarColumn + 2 * space['8'];
 
 /** Info-Sheet: "Hoehe 639 (etwa 75 %)" — als Anteil, damit es auf jedem Geraet passt. */
 export const INFO_SHEET_RATIO = 0.75;
-
-/**
- * Tag-Sheet: hoeher, weil darunter die Tastatur steht (Blatt `4e`, Schritt 4)
- * und Suchfeld, Trefferliste und die gesetzten Tags gleichzeitig sichtbar
- * bleiben muessen.
- */
-export const TAG_SHEET_RATIO = 0.88;

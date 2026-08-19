@@ -15,27 +15,14 @@
  */
 import type { DocType } from '../theme/tile';
 import { tagPalette } from '../theme/colors';
-import type { LibraryDocument, LibraryFolder, LibraryTag, StoredDocument } from './library';
+import type { LibraryDocument, LibraryFolder, StoredDocument } from './library';
 
-export type {
-  DocumentSource,
-  LibraryDocument,
-  LibraryFolder,
-  LibraryTag,
-  StoredDocument,
-} from './library';
-
-export const libraryTags: LibraryTag[] = [
-  { id: 'finanzen', name: 'Finanzen', color: tagPalette.sky },
-  { id: 'recht', name: 'Recht', color: tagPalette.violet },
-  { id: 'steuer', name: 'Steuer', color: tagPalette.amber },
-  { id: 'reisen', name: 'Reisen', color: tagPalette.teal },
-  { id: 'haushalt', name: 'Haushalt', color: tagPalette.lime },
-  { id: 'technik', name: 'Technik', color: tagPalette.rose },
-];
+export type { DocumentSource, LibraryDocument, LibraryFolder, StoredDocument } from './library';
 
 /**
- * Ordnerfarben der Erstbefuellung. Sie tragen laut Handoff-Dokument nur das
+ * Ordnerfarben der Erstbefuellung. `tagPalette` heisst nur historisch so — sie
+ * faerbt seit dem Wegfall der Tags nur noch Ordner (auch `pull.ts` →
+ * `colorFor`). Sie tragen laut Handoff-Dokument nur das
  * `folder`-Icon, nie eine Flaeche — sonst konkurrieren sie mit den
  * Dokumentkacheln. Blatt `3a` zeigt "Finanzen" in `sky`, der Rest folgt der
  * Reihenfolge der sechs Ordnerfarben.
@@ -77,7 +64,6 @@ const curated: LibraryDocument[] = [
     title: 'Portfolio-Analyse Q3 2026',
     docType: 'chart',
     folderName: 'Finanzen',
-    tagIds: ['finanzen', 'steuer'],
     favorite: true,
     cached: true,
     sizeBytes: 245_760,
@@ -91,7 +77,6 @@ const curated: LibraryDocument[] = [
     title: 'Mietrecht — Kündigungsfristen',
     docType: 'text',
     folderName: 'Recht',
-    tagIds: ['recht'],
     favorite: false,
     cached: true,
     sizeBytes: 90_112,
@@ -105,7 +90,6 @@ const curated: LibraryDocument[] = [
     title: 'Zinsrechner Annuitätendarlehen',
     docType: 'calculator',
     folderName: 'Finanzen',
-    tagIds: ['finanzen'],
     favorite: false,
     cached: true,
     sizeBytes: 159_744,
@@ -119,7 +103,6 @@ const curated: LibraryDocument[] = [
     title: 'Packliste Islandreise',
     docType: 'list',
     folderName: 'Reisen',
-    tagIds: ['reisen'],
     favorite: false,
     cached: true,
     sizeBytes: 43_008,
@@ -133,7 +116,6 @@ const curated: LibraryDocument[] = [
     title: 'Stromverbrauch 2024–2026',
     docType: 'chart',
     folderName: 'Haushalt',
-    tagIds: ['haushalt'],
     favorite: false,
     cached: true,
     sizeBytes: 317_440,
@@ -147,7 +129,6 @@ const curated: LibraryDocument[] = [
     title: 'Depot-Auswertung August',
     docType: 'chart',
     folderName: null,
-    tagIds: ['finanzen'],
     favorite: false,
     cached: true,
     sizeBytes: 524_288,
@@ -161,7 +142,6 @@ const curated: LibraryDocument[] = [
     title: 'Vergleich Cloud-Anbieter',
     docType: 'table',
     folderName: null,
-    tagIds: ['technik'],
     favorite: false,
     cached: true,
     sizeBytes: 98_304,
@@ -175,7 +155,6 @@ const curated: LibraryDocument[] = [
     title: 'Checkliste Steuererklärung 2026',
     docType: 'list',
     folderName: null,
-    tagIds: ['steuer'],
     favorite: false,
     cached: true,
     sizeBytes: 65_536,
@@ -189,7 +168,6 @@ const curated: LibraryDocument[] = [
     title: 'Serverkosten je Anbieter',
     docType: 'table',
     folderName: null,
-    tagIds: ['technik'],
     favorite: false,
     cached: true,
     sizeBytes: 79_872,
@@ -203,7 +181,6 @@ const curated: LibraryDocument[] = [
     title: 'Haushaltsbudget laufendes Jahr',
     docType: 'table',
     folderName: 'Haushalt',
-    tagIds: ['haushalt', 'finanzen'],
     favorite: true,
     cached: true,
     sizeBytes: 131_072,
@@ -217,7 +194,6 @@ const curated: LibraryDocument[] = [
     title: 'Notizen zum Arbeitsvertrag',
     docType: 'text',
     folderName: 'Recht',
-    tagIds: ['recht'],
     favorite: false,
     // Offline nicht geladen — zeigt den deaktivierten Zustand der Zeile.
     cached: false,
@@ -232,7 +208,6 @@ const curated: LibraryDocument[] = [
     title: 'Lesenotizen Statistik-Vorlesung',
     docType: 'text',
     folderName: 'Studium',
-    tagIds: [],
     favorite: false,
     cached: true,
     sizeBytes: 184_320,
@@ -333,10 +308,6 @@ function generated(): LibraryDocument[] {
       // Ein Rest bleibt nicht einsortiert, aber nicht neu — er darf nicht in
       // die Sektion "Neu" rutschen, deshalb liegt der Import Monate zurueck.
       folderName: folderIndex === folderNames.length ? null : folderNames[folderIndex],
-      // Nur jedes dritte Dokument traegt einen Tag — und die Wahl richtet sich
-      // nach der laufenden Nummer INNERHALB dieser Drittel. `i % 6` traefe
-      // sonst nur zwei der sechs Tags, weil 3 und 6 nicht teilerfremd sind.
-      tagIds: i % 3 === 0 ? [libraryTags[(i / 3) % libraryTags.length].id] : [],
       favorite: i % 17 === 0,
       cached: i % 23 !== 0,
       sizeBytes: 20_480 + ((i * 8191) % 900_000),
@@ -370,13 +341,26 @@ const offlineSeedIds = new Set(
     .map((document) => document.id)
 );
 
+/** Diese beiden Dokumente liegen im Archiv — damit der vierte Chip nicht leer ist. */
+const archivedSeedIds = new Set(['doc-mietrecht-kuendigung', 'doc-lesenotizen-statistik']);
+
 /**
  * Der Bestand als Datenbankzeilen. `cacheKey` bleibt `null`: diese Dokumente
  * haben keine eigene Datei, der Viewer erzeugt ihren Inhalt aus
  * `sampleDocumentHtml`. Erst importierte Dokumente bringen eine Datei mit.
+ *
+ * Der Workflow-Status ist gestreut, damit jeder der vier Filter etwas zeigt:
+ * jedes zweite Dokument ist ungelesen, die andere Haelfte traegt einen
+ * Zeitpunkt. Archiviertes gilt zugleich als gelesen — die uebliche Reihenfolge,
+ * und die Bestaetigung, dass beide Achsen unabhaengig sind.
  */
-export const seedLibrary: StoredDocument[] = seedDocuments.map((document) => ({
+export const seedLibrary: StoredDocument[] = seedDocuments.map((document, index) => ({
   ...document,
+  readAt:
+    index % 2 === 0 && !archivedSeedIds.has(document.id)
+      ? null
+      : now - ((index * 7) % 30) * DAY,
+  archivedAt: archivedSeedIds.has(document.id) ? now - 9 * DAY : null,
   note: '',
   keepOffline: offlineSeedIds.has(document.id),
   trashedAt: null,

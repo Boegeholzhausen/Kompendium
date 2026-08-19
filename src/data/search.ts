@@ -1,7 +1,7 @@
 /**
  * Suchlauf ueber den Bestand (Blatt `3d`).
  *
- * Gesucht wird in Titel, Ordnername, Tag-Namen und im Text des Dokuments.
+ * Gesucht wird in Titel, Ordnername und im Text des Dokuments.
  * Woher der Text kommt, entscheidet die Herkunft des Dokuments: importierte
  * Dokumente haben eine Datei im Cache, die Erstbefuellung hat ihren erzeugten
  * Beispielinhalt. Beides landet in derselben Textablage, und die Suche selbst
@@ -15,7 +15,7 @@
  * ## Mehrere Begriffe
  *
  * Die Abfrage wird an Leerzeichen zerlegt; **alle** Begriffe muessen zutreffen
- * (UND), jeder fuer sich darf aber in Titel, Ordner, Tag ODER Text stehen.
+ * (UND), jeder fuer sich darf aber in Titel, Ordner ODER Text stehen.
  * "annuität rechner" findet damit ein Dokument, dessen Titel den einen und
  * dessen Text den anderen Begriff traegt. Ein Begriff in Anfuehrungszeichen
  * bleibt als Ganzes stehen ("kurzfristige verbindlichkeiten").
@@ -59,14 +59,14 @@
  * dunklem Grund reine Textfarbe im Fliesstext schwer zu finden ist.
  *
  * Sortiert wird nach Relevanz, nicht nach Datum: Titeltreffer stehen vor
- * Tag- und Ordnertreffern, diese vor reinen Texttreffern; bei mehreren
+ * Ordnertreffern, diese vor reinen Texttreffern; bei mehreren
  * Begriffen zaehlt der **beste** Rang, den ein Begriff erreicht. Bei
  * Gleichstand entscheidet das juengere Datum. Der Sektionskopf nennt
  * "Relevanz" rechts.
  */
 import { readDocument } from './cache';
 import { plainText } from './plainText';
-import type { LibraryTag, StoredDocument } from './library';
+import type { StoredDocument } from './library';
 import { sampleDocumentText } from './sampleDocumentHtml';
 import { periodDays, type SearchFilters } from '../state/search';
 
@@ -84,7 +84,7 @@ export interface SearchResult {
   snippet: string;
   snippetHit: Highlight | null;
   titleHit: Highlight | null;
-  /** Bester Rang ueber alle Begriffe: 0 Titel, 1 Tag/Ordner, 2 reiner Text. */
+  /** Bester Rang ueber alle Begriffe: 0 Titel, 1 Ordner, 2 reiner Text. */
   rank: number;
 }
 
@@ -127,8 +127,8 @@ function fold(value: string): Folded {
 }
 
 /**
- * Dieselbe Faltung ohne Abbildung — fuer die Abfrage und fuer Ordner- und
- * Tag-Namen, bei denen nichts hervorgehoben wird.
+ * Dieselbe Faltung ohne Abbildung — fuer die Abfrage und fuer Ordnernamen,
+ * bei denen nichts hervorgehoben wird.
  */
 export function normalize(value: string): string {
   let folded = '';
@@ -170,7 +170,7 @@ export async function warmSearchIndex(documents: StoredDocument[]): Promise<void
       if (html !== null) indexDocumentText(document.id, html);
     } catch {
       // Eine unlesbare Datei kostet den Textteil dieses einen Treffers, nicht
-      // die Suche. Titel, Ordner und Tags finden das Dokument weiterhin.
+      // die Suche. Titel und Ordner finden das Dokument weiterhin.
     }
   }
 }
@@ -187,7 +187,7 @@ function textOf(document: StoredDocument): string {
   // erzeugt und danach genauso gepuffert — oder ein abgeglichenes Dokument,
   // dessen Datei noch oben liegt. Fuer das zweite darf hier NICHTS entstehen:
   // erzeugter Text wuerde Treffer liefern, die in dem Dokument nicht stehen.
-  // Titel, Ordner und Tags finden es weiterhin.
+  // Titel und Ordner finden es weiterhin.
   const text =
     document.cacheKey === null && document.source === 'sample'
       ? sampleDocumentText({
@@ -229,7 +229,7 @@ function find(folded: Folded, needle: string): Highlight | null {
 /**
  * Schneidet den Ausschnitt um die Fundstelle heraus und rueckt die Fundstelle
  * mit. Ohne Fundstelle steht der Anfang des Textes da — der Treffer kam dann
- * aus Titel, Ordner oder Tag, und der Anfang sagt am meisten ueber das
+ * aus Titel oder Ordner, und der Anfang sagt am meisten ueber das
  * Dokument aus.
  */
 function snippetFor(text: string, hit: Highlight | null): { snippet: string; hit: Highlight | null } {
@@ -281,9 +281,8 @@ export function searchTerms(query: string): SearchTerm[] {
 export interface SearchInput {
   query: string;
   filters: SearchFilters;
-  /** Der Bestand aus der Datenbank — Titel, Ordner und Tags stehen in der Zeile. */
+  /** Der Bestand aus der Datenbank — Titel und Ordner stehen in der Zeile. */
   documents: StoredDocument[];
-  tags: LibraryTag[];
   /** Bezugspunkt des Zeitraum-Filters; als Parameter, damit das Ergebnis pruefbar bleibt. */
   now?: number;
 }
@@ -296,13 +295,13 @@ export interface SearchInput {
 function passesFilters(document: StoredDocument, input: SearchInput, now: number): boolean {
   const { filters } = input;
 
+  // Nur der Papierkorb faellt heraus — **archivierte Dokumente werden
+  // mitgesucht**. Sonst waere das Archiv ein schwarzes Loch, in dem man nichts
+  // wiederfindet; dass ein Treffer dort liegt, sagt stattdessen die Fusszeile
+  // der Trefferzeile ("Archiv · …").
   if (document.trashedAt !== null) return false;
 
   if (filters.folderName !== null && document.folderName !== filters.folderName) return false;
-
-  if (filters.tagIds.length > 0) {
-    if (!filters.tagIds.every((id) => document.tagIds.includes(id))) return false;
-  }
 
   if (filters.period !== null) {
     if (now - document.updatedAt > periodDays[filters.period] * DAY) return false;
@@ -311,7 +310,7 @@ function passesFilters(document: StoredDocument, input: SearchInput, now: number
   return true;
 }
 
-/** Rang eines einzelnen Begriffs: 0 Titel, 1 Tag/Ordner, 2 Text, 3 kein Fund. */
+/** Rang eines einzelnen Begriffs: 0 Titel, 1 Ordner, 2 Text, 3 kein Fund. */
 const NO_MATCH = 3;
 
 function matchAll(
@@ -323,10 +322,6 @@ function matchAll(
 
   const foldedTitle = fold(title);
   const foldedFolder = folderName === null ? '' : normalize(folderName);
-  const foldedTags = document.tagIds.map((id) => {
-    const tag = input.tags.find((entry) => entry.id === id);
-    return tag === undefined ? '' : normalize(tag.name);
-  });
   const foldedText = foldedTextOf(document);
 
   let bestRank = NO_MATCH;
@@ -336,18 +331,17 @@ function matchAll(
   for (const term of terms) {
     const inTitle = find(foldedTitle, term.folded);
     const inFolder = foldedFolder.includes(term.folded);
-    const inTag = foldedTags.some((name) => name !== '' && name.includes(term.folded));
     const inText = find(foldedText, term.folded);
 
     // UND ueber die Begriffe: schon einer ohne Fund laesst das Dokument fallen.
-    if (inTitle === null && !inFolder && !inTag && inText === null) return null;
+    if (inTitle === null && !inFolder && inText === null) return null;
 
     // Die erste Fundstelle je Ort bleibt stehen — hervorgehoben wird eine
     // Stelle, nicht alle; mehrere Kaesten in einer Zeile waeren Unruhe.
     if (titleHit === null && inTitle !== null) titleHit = inTitle;
     if (textHit === null && inText !== null) textHit = inText;
 
-    const rank = inTitle !== null ? 0 : inFolder || inTag ? 1 : 2;
+    const rank = inTitle !== null ? 0 : inFolder ? 1 : 2;
     if (rank < bestRank) bestRank = rank;
   }
 

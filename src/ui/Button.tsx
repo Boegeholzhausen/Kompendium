@@ -138,11 +138,13 @@ export function TextButton({
 /**
  * Sekundaere Pille — Hoehe 40, `radius pill`, sonst wie der sekundaere Button.
  *
- * Keine eigene Nummer im Inventar, aber in Screen 11 genau beschrieben:
- * "+ Neuer Tag" sitzt als sekundaere Pille im Kopf, nicht als FAB — Tags
- * entstehen beim Zuweisen, und ein Mint-FAB gaebe diesem Screen falsches
- * Gewicht. Die 40 kommen ueber hitSlop auf die geforderten 48, ohne die
- * Kopfzeile hoeher zu machen.
+ * Keine eigene Nummer im Inventar, aber in Screen 11 genau beschrieben: eine
+ * sekundaere Pille im Kopf statt eines FAB — ein Mint-FAB gaebe einem
+ * Verwaltungs-Screen falsches Gewicht. Die 40 kommen ueber hitSlop auf die
+ * geforderten 48, ohne die Kopfzeile hoeher zu machen.
+ *
+ * Seit dem Wegfall der Tag-Verwaltung ohne Aufrufer; sie bleibt als Baustein
+ * des Inventars stehen.
  */
 export function PillButton({ label, icon: LeadingIcon, disabled, onPress, style }: BaseButtonProps) {
   const tint = disabled ? textColor.tertiary : textColor.primary;

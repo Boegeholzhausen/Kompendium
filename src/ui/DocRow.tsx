@@ -17,10 +17,10 @@
 import React from 'react';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 
-import { accent, bg, border, radius, size, space, text as textColor } from '../theme';
+import { accent, bg, border, iconSize, radius, size, space, text as textColor } from '../theme';
 import type { DocType } from '../theme/tile';
 import { DocTile } from './DocTile';
-import { Check, CloudSlash, Star, type Icon } from './icons';
+import { Check, CheckCircle, Circle, CloudSlash, Star, type Icon } from './icons';
 import { PressableScale } from './press';
 import { Text } from './Text';
 
@@ -32,8 +32,12 @@ export interface DocRowProps {
   meta: string;
   /** Ersetzt das Standard-Icon der Metazeile (Papierkorb: Restfrist mit `warning`). */
   metaIcon?: Icon;
-  /** Farben der gesetzten Tags — 6 x 6-Punkte rechts. */
-  tagColors?: string[];
+  /**
+   * Workflow-Status. Das Icon steht rechts vor dem Stern und ist **kein**
+   * eigenes Beruehrungsziel — es zeigt nur an; gesetzt wird der Status ueber
+   * die Wischgeste, das Kontextmenue oder die Auswahlleiste.
+   */
+  unread?: boolean;
   favorite?: boolean;
   /**
    * Der Stern ist ein eigenes 48-x-48-Ziel und kostet die Zeile entsprechend
@@ -69,7 +73,7 @@ export function DocRow({
   type,
   meta,
   metaIcon,
-  tagColors,
+  unread,
   favorite = false,
   showFavorite = true,
   unavailable = false,
@@ -101,7 +105,9 @@ export function DocRow({
         onLongPress={onLongPress}
         disabled={unavailable && !selectionMode}
         accessibilityRole="button"
-        accessibilityLabel={`${title}. ${unavailable ? 'Nicht geladen' : metaText}`}
+        accessibilityLabel={`${title}. ${unavailable ? 'Nicht geladen' : metaText}.${
+          unread === undefined ? '' : unread ? ' Ungelesen.' : ' Gelesen.'
+        }`}
         accessibilityState={{ selected, disabled: unavailable }}
       >
         {selectionMode ? (
@@ -124,12 +130,12 @@ export function DocRow({
           </View>
         </View>
 
-        {tagColors && tagColors.length > 0 && !selectionMode ? (
-          <View style={styles.dots}>
-            {tagColors.map((color) => (
-              <View key={color} style={[styles.dot, { backgroundColor: color }]} />
-            ))}
-          </View>
+        {unread !== undefined && !selectionMode ? (
+          unread ? (
+            <Circle size={iconSize.sm} color={accent.base} weight="fill" />
+          ) : (
+            <CheckCircle size={iconSize.sm} color={textColor.tertiary} weight="regular" />
+          )
         ) : null}
 
         {!selectionMode && showFavorite ? (
@@ -191,15 +197,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: space['4'] + space['2'],
     marginTop: space['2'],
-  },
-  dots: {
-    flexDirection: 'row',
-    gap: space['4'] + space['2'],
-  },
-  dot: {
-    width: size.tagDot,
-    height: size.tagDot,
-    borderRadius: radius.pill,
   },
   starTarget: {
     width: size.touchTarget,

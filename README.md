@@ -9,8 +9,8 @@ Dark Mode only.
 Der Nutzer lässt sich am PC laufend HTML-Dateien generieren — Analysen,
 Übersichten, Rechner, Nachschlagewerke, Reports —, die sich sonst über
 Downloads-Ordner und Chats verstreuen. Kompendium sammelt sie an einem Ort,
-macht sie am Handy lesbar und lässt sie in Ordner, Tags und Favoriten
-sortieren. Der Nutzer ist gleichzeitig Autor und Leser seiner eigenen
+macht sie am Handy lesbar und lässt sie in Ordner, Favoriten und einen
+Workflow-Status (gelesen/archiviert) sortieren. Der Nutzer ist gleichzeitig Autor und Leser seiner eigenen
 Sammlung: ein technisch versierter Einzelnutzer, deutschsprachig, 50–500
 Dokumente, nutzt die App abends und unterwegs, oft im Dunkeln. Er will in
 dieser Reihenfolge: **wiederfinden** („Wo war nochmal die Übersicht von
@@ -31,8 +31,9 @@ das externe Original.
 Die App ist gebaut und deckt ab: Theme/Design-Tokens, die generierte
 Dokumentkachel, alle 18 Basiskomponenten, die Bibliothek in Listen- und
 Kachelansicht mit Sektion "Neu" und kollabierendem Header, den Viewer mit
-Chrome-Autohide, Info- und Tag-Sheet, Ordner-Übersicht und -Detail,
-Tag-Verwaltung, Suche, Import (Datei/Zwischenablage/URL), Mehrfachauswahl,
+Chrome-Autohide und Info-Sheet, Ordner-Übersicht und -Detail, den
+Workflow-Status per Wischgeste, Suche, Import (Datei/Zwischenablage/URL),
+Mehrfachauswahl,
 Einstellungen mit Papierkorb und Darstellung sowie die fünf Lade-/Fehler-/
 Leerzustände (leer, laden, offline, Sync-Fehler, kein Cache).
 
@@ -55,7 +56,8 @@ Reanimated 4.5). Details zu Paketen und Architektur: [TECH_STACK.md](TECH_STACK.
 nennt die Tabs Bibliothek/Ordner/Suche/Einstellungen, das Handoff-Dokument
 Bibliothek/Ordner/Tags/Einstellungen mit Suche als Push-Screen ohne
 Tab-Bar. Gebaut wurde die Handoff-Variante — bei Widerspruch gilt das
-Handoff-Dokument.
+Handoff-Dokument. Mit dem Wegfall der Tags sind daraus drei Ziele geworden:
+Bibliothek/Ordner/Einstellungen (siehe "Abweichungen").
 
 ## Supabase
 
@@ -99,7 +101,7 @@ in [DATABASE_STRUCTURE.md](DATABASE_STRUCTURE.md).
 ## Struktur
 
 ```
-app/(tabs)/           Bibliothek, Ordner, Tags, Einstellungen
+app/(tabs)/           Bibliothek, Ordner, Einstellungen
 app/dokument/[id]     Viewer als Push-Screen, ohne Tab-Bar
 app/ordner/[name]     Ordner-Detail als Push-Screen
 app/alle-dokumente    "Alle Dokumente" — kein Ordner, eigene Route
@@ -117,11 +119,11 @@ src/data/db/          Schema und Repository — die einzige Stelle mit SQL
 src/dev/              Abnahmeblätter (Tokens, Kacheln, Komponenten)
 scripts/lint-tokens   Prüft: keine freihändigen Farb- oder Schriftwerte
 scripts/shots.mjs     Screenshots des Viewer-Kernflows
-scripts/shots6.mjs    Screenshots der Ordner-/Tag-/Such-/Import-Screens
+scripts/shots6.mjs    Screenshots der Ordner-/Such-/Import-Screens
 scripts/shots7.mjs    Screenshots der Einstellungen, inkl. Import
 scripts/shots8.mjs    Screenshots der Lade-/Fehler-/Leerzustände
 src/data/detect.ts    Titel- und Typerkennung — geteilt mit dem Upload-Skript
-src/data/remote/      Abgleich: Abruf (pull) und Nachladen der Dateien
+src/data/remote/      Abgleich: Abruf (pull), Push (Outbox), Dateien
 scripts/upload.mjs    Weg vom PC: HTML-Ordner nach Supabase
 supabase/schema.sql   Datenbankschema für den Sync
 ```
@@ -217,7 +219,7 @@ geht in die Datenbank und landet in "Neu".
 Der Viewer liest importierte Dokumente aus dem Cache; Dokumente der
 Erstbefüllung haben keine Datei und bekommen den erzeugten Beispielinhalt aus
 `src/data/sampleDocumentHtml.ts`. Die Suche (`src/data/search.ts`) läuft über
-Titel, Ordner, Tags und den Volltext aus beiden Quellen; der Index wird nach
+Titel, Ordner und den Volltext aus beiden Quellen; der Index wird nach
 dem Start einmal warmgelaufen.
 
 **Teilen** gibt die Datei weiter, nicht den Titel: `expo-sharing` bekommt den
@@ -252,9 +254,9 @@ beim Laden nichts weiß aufblitzt.
   Segment über null wird mindestens 2 dp breit gezeichnet, damit es sichtbar
   bleibt.
 - **Sync-Zustand beim Start** ist `pending` ("Änderungen offen"), nicht wie in
-  Blatt `1c` `syncing`: es hat noch kein Abgleich stattgefunden. "Jetzt
-  synchronisieren" führt den Zustandsverlauf vor — der echte Abgleich mit
-  Supabase ist noch offen.
+  Blatt `1c` `syncing`. Seit es die Outbox gibt, ist das keine Annahme mehr,
+  sondern eine Auskunft: `hydrateStores()` zählt die offenen Einträge und
+  setzt `idle`, wenn keiner übrig ist.
 - **"Bewegung reduzieren"** ist in Blatt `6b` ein Schalter, folgt laut
   Untertitel aber der Systemeinstellung. Beides zusammen geht nicht; die Zeile
   zeigt den gelesenen Zustand und ist nicht bedienbar, wie das Farbschema
@@ -277,10 +279,9 @@ beim Laden nichts weiß aufblitzt.
   auf NetInfo: dessen Web-Fassung nutzt, sobald der Browser eine
   `navigator.connection` anbietet, allein deren `change`-Ereignis — das kommt
   beim Abschalten einmal und danach nie wieder.
-- **Sync-Fehler** entsteht nur beim Abgleich ohne Netz. Einen anderen Weg
-  dorthin gäbe es erst mit dem echten Supabase-Abgleich.
-- **Sync-Zustand auf der leeren Bibliothek** ist `idle`, nicht `pending`: ohne
-  ein einziges Dokument kann nichts offen sein.
+- **Sync-Fehler** entsteht beim Abgleich ohne Netz und wenn eine Zeile beim
+  Hochschicken scheitert. Der Eintrag bleibt dann in der Outbox stehen und
+  wird beim nächsten Lauf erneut versucht.
 - **Leere Bibliothek ohne Kopf-Schaltflächen:** Ansicht umschalten und
   Sortieren entfallen, es gibt nichts anzuordnen.
 - **Spalte `last_opened_at`** (Schema-Version 2, mit Migration für vorhandene
@@ -316,14 +317,11 @@ beim Laden nichts weiß aufblitzt.
   feuert ab 8 px Unterschied, eine Datenbankschreibung je Schritt wäre beim
   Lesen spürbar. Einträge zu Dokumenten, die es nicht mehr gibt, fallen beim
   Start und beim endgültigen Löschen weg.
-- **Die Filter-Chips zählen die echte Tag-Nutzung.** Blatt `1c` zeigt zwei
-  feste Tags; bis Paket C standen sie als `topFilterTagIds` in
-  `sampleLibrary.ts` und waren damit Laufzeitbestand aus der Erstbefüllung —
-  ein Verstoß gegen die harte Regel. Gezeigt werden jetzt die drei
-  häufigsten Tags über alle nicht gelöschten Dokumente (bei Gleichstand nach
-  Name); ein Tag ohne Dokument erscheint nicht. Ist der aktive Filter nicht
-  unter den drei, hängt er zusätzlich an: ein Chip, der verschwindet, während
-  seine Einschränkung weiterwirkt, wäre nicht erklärbar.
+- **Die Filter-Chips der Bibliothek sind vier feste Werte** — Alle ·
+  Ungelesen · Favoriten · Archiv. Blatt `1c` zeigt dort zwei Tag-Chips; mit
+  dem Wegfall der Tags tritt der Workflow-Status an ihre Stelle. Die Leiste
+  hängt damit nicht mehr am Bestand: ein Chip, der verschwindet, weil gerade
+  kein Dokument dazu passt, wäre ein Filter, den man nicht wieder findet.
 - **Vierte Sortierung "Zuletzt geöffnet".** Das Handoff-Dokument führt drei;
   die Spalte `last_opened_at` gibt es seit Schema-Version 2, sie wurde aber
   nirgends zum Sortieren benutzt. Für die häufigste Aufgabe (wiederfinden) ist
@@ -338,7 +336,7 @@ beim Laden nichts weiß aufblitzt.
   noch FAB noch eine Sortier-Schaltfläche, und die Sektionsüberschrift steht
   fest auf "Zuletzt geändert". Aufgeräumt wird aber genau dort; ohne diese
   Ergänzungen ist der Ordner der einzige Listen-Screen, in dem man nichts tun
-  kann. Kontextmenü, Verschieben-Sheet, Tag-Sheet und Toast kommen aus einem
+  kann. Kontextmenü, Verschieben-Sheet und Toast kommen aus einem
   gemeinsamen Modul (`screens/library/documentActions.tsx`), das sich
   Bibliothek und Ordner-Detail teilen. Die Auswahl-Aktionsleiste ersetzt dort
   keine Tab-Bar (der Screen liegt darüber), sondern schwebt über dem unteren
@@ -350,8 +348,8 @@ beim Laden nichts weiß aufblitzt.
 - **Suche über mehrere Begriffe.** Das Handoff-Dokument beschreibt eine
   Teilzeichenketten-Suche über einen Begriff. Damit fand "annuität rechner"
   nichts, obwohl beide Wörter im Dokument stehen. Die Abfrage wird jetzt an
-  Leerzeichen zerlegt (UND über die Begriffe, jeder für sich in Titel, Ordner,
-  Tag oder Text); was in Anführungszeichen steht, bleibt eine Wortgruppe.
+  Leerzeichen zerlegt (UND über die Begriffe, jeder für sich in Titel, Ordner
+  oder Text); was in Anführungszeichen steht, bleibt eine Wortgruppe.
 - **Umlaute: Akzente entfernen, keine ae-Umschrift.** Gesucht wird in einer
   gefalteten Fassung — kleingeschrieben, `ß→ss`, danach NFD ohne
   Kombinationszeichen. "annuitat" findet damit "Annuität" und "Muller" findet
@@ -407,6 +405,38 @@ beim Laden nichts weiß aufblitzt.
   auf. Der Chip nennt den Ordnernamen und bleibt mit einem Tipp abwählbar.
   "Alle Dokumente" setzt keinen Filter.
 
+- **Tags sind ersatzlos entfallen; an ihre Stelle tritt der Workflow-Status.**
+  Tags sind eine mehrwertige Klassifikation, "gelesen/ungelesen/archiviert" ein
+  einwertiger Lebenszyklus — über eine Zuordnungstabelle abgebildet erlaubte
+  die Datenbank Zustände, die es fachlich nicht gibt. Der Status steht jetzt
+  als Spalte in der Dokumentzeile (`read_at`, `archived_at`).
+- **Die Tab-Bar hat drei statt vier Ziele** (Bibliothek · Ordner ·
+  Einstellungen): mit den Tags fällt der Screen weg, den das vierte Ziel
+  ansteuerte.
+- **Die Auswahl-Aktionsleiste** (Blatt `3h`) trägt Verschieben · Gelesen ·
+  Archiv · Löschen. Der Favorit steht dort nicht mehr, sondern im Kontextmenü
+  und als Stern in der Zeile — vier Spalten, und der Status ist die Aktion,
+  für die man mehrere Dokumente auf einmal auswählt.
+- **Archiv ist eine zweite Achse neben gelesen/ungelesen, keine dritte Stufe.**
+  Ein archiviertes Dokument ist in aller Regel auch gelesen; mit nur einer
+  Status-Spalte ginge beim Entarchivieren die Leseinformation verloren.
+- **Der Status wird nicht automatisch beim Öffnen gesetzt.** Ein Dokument
+  aufzuschlagen heißt nicht, es gelesen zu haben — der Status kommt über die
+  Wischgeste, das Kontextmenü, die Auswahlleiste oder die Schalter im
+  Info-Sheet. Wischen ist dabei immer nur eine Abkürzung, nie der einzige Weg.
+- **Es gibt jetzt eine Richtung nach oben (Outbox).** `updateDocuments` merkt
+  im Repository vor, welche Felder sich geändert haben; `pushChanges()` schickt
+  sie vor jedem Abruf hoch. Bekannte Grenzen: Dokumente ohne `storage_path`
+  werden nicht eingereiht (die Zeile war nie oben, ein `update` träfe nichts),
+  ein lokal angelegter Ordner wird ohne `remote_id` ausgelassen statt als
+  "kein Ordner" geschickt, und `updated_at` setzt der Server — eine Gerätezeit
+  im Wasserzeichen könnte die Reihenfolge dauerhaft verderben.
+- **Der Abruf überschreibt Nutzerfelder nicht, solange ein Outbox-Eintrag
+  offen ist.** Sonst nähme er zurück, was gerade offline gewischt wurde.
+  Technische Felder (`doc_type`, `size_bytes`, `updated_at`, `source`,
+  `storage_path`, `content_hash`) kommen weiterhin immer vom Server, sonst
+  bliebe der Dateicache auf einem veralteten Stand.
+
 Design-Abweichungen je Screen (z. B. gestrichene Sektion "Zuletzt geöffnet",
 Beschriftungen im Aktionsbalken, ergänztes "Dokumente abdunkeln", ergänztes
 "Für offline vormerken"): siehe die jeweilige Screen-Beschreibung in
@@ -414,18 +444,18 @@ Beschriftungen im Aktionsbalken, ergänztes "Dokumente abdunkeln", ergänztes
 
 ## Noch offen
 
-- Push-Sync: lokale Änderungen (Ordner zuweisen, Tag setzen, Favorit,
-  Umbenennen, Papierkorb) stehen in SQLite und gehen noch nicht nach oben.
-  Der Sync-Status bleibt deshalb nach jeder Änderung am Handy auf
-  „Änderungen offen" — das ist die ehrliche Auskunft, keine Attrappe.
+- Dateien gehen noch nicht nach oben: die Outbox schickt Metadaten, aber ein
+  am Handy importiertes Dokument bleibt lokal, weil es keinen `storage_path`
+  hat. Dasselbe gilt für Ordner, die am Handy entstanden sind — ohne
+  `remote_id` lässt der Push das Feld aus.
 - Abgleich beim Wechsel in den Vordergrund und Pull-to-Refresh. Zurzeit
   läuft der Abruf beim App-Start und über „Jetzt synchronisieren".
 - Der Volltext eines abgeglichenen Dokuments steht erst zur Verfügung, wenn
   seine Datei einmal geöffnet (und damit geladen) wurde. Bis dahin findet die
-  Suche es über Titel, Ordner und Tags. Der serverseitige `preview_text` wird
+  Suche es über Titel und Ordner. Der serverseitige `preview_text` wird
   noch nicht mitgenommen.
 - Unter iOS wirkt die Textgröße nicht: `textZoom` ist Android-only.
-- Aus dem ursprünglichen Lösungskonzept noch nicht umgesetzt: Push-Sync
-  (Outbox), PDF-Export, Share-Sheet-Empfang, Hintergrund-Sync,
+- Aus dem ursprünglichen Lösungskonzept noch nicht umgesetzt: PDF-Export,
+  Share-Sheet-Empfang, Hintergrund-Sync,
   eigenes App-Icon (die letzten drei brauchen einen Dev Build statt Expo Go,
   siehe [TECH_STACK.md](TECH_STACK.md)).

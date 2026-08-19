@@ -55,7 +55,7 @@ await shot('02-geladen', 4000);
 await page.goto(`${base}/?bestand=leer`, { waitUntil: 'networkidle' });
 await shot('03-leer', 1500);
 
-// Ordner und Tags sind dort nicht anwaehlbar — das muss auch stimmen und
+// Der Ordner-Tab ist dort nicht anwaehlbar — das muss auch stimmen und
 // nicht nur so aussehen.
 await page.getByLabel('Ordner', { exact: true }).click({ force: true });
 await shot('04-leer-ordner-gesperrt', 800);

@@ -2,18 +2,25 @@
  * Das Schema der lokalen Datenbank.
  *
  * Handoff-Dokument, "State Management": "lokale Datenbank ist die
- * Wahrheitsquelle (Liste, Metadaten, Tags, Ordner), Sync laeuft im
- * Hintergrund; die Liste rendert immer aus dem lokalen Bestand, damit sie
- * offline vollstaendig funktioniert."
+ * Wahrheitsquelle (Liste, Metadaten, Ordner), Sync laeuft im Hintergrund; die
+ * Liste rendert immer aus dem lokalen Bestand, damit sie offline vollstaendig
+ * funktioniert."
  *
- * Vier Tabellen und ein Schluessel-Wert-Paar:
+ * Drei Tabellen und zwei Schluessel-Wert-Paare:
  *
  *   documents       eine Zeile je Dokument, mit allem, was ein Screen zeigt
- *   tags            Name und Farbe
- *   document_tags   die Zuordnung — eine eigene Tabelle, weil ein Tag zu
- *                   vielen Dokumenten gehoert und ein Dokument zu vielen Tags
  *   folders         Name (zugleich Ausweis), Farbe, "Inhalt offline behalten"
+ *   outbox          was lokal geaendert wurde und noch nach oben muss
  *   settings        Darstellung und Bibliothek-Voreinstellungen
+ *
+ * Der Workflow-Status (`read_at`, `archived_at`) steht als Spalte in der
+ * Dokumentzeile und nicht als Zuordnung wie frueher die Tags: "gelesen" ist
+ * ein einwertiger Lebenszyklus, keine mehrwertige Klassifikation — ueber eine
+ * Zuordnungstabelle abgebildet erlaubte die Datenbank Zustaende, die es
+ * fachlich nicht gibt. Archiv ist dabei eine zweite Achse und keine dritte
+ * Stufe: ein archiviertes Dokument ist in aller Regel auch gelesen, und mit
+ * nur einer Status-Spalte ginge beim Entarchivieren die Leseinformation
+ * verloren.
  *
  * Der Ordner steht als **Name** in `documents.folder_name` und nicht als
  * Fremdschluessel auf eine Ausweisspalte: der Prototyp zeigt ueberall den
@@ -21,16 +28,15 @@
  * Umbenennen fasst deshalb beide Tabellen an (`renameFolder` im Repository) —
  * genau eine Stelle, an der das passiert.
  *
- * `ON DELETE CASCADE` in `document_tags` erspart das Aufraeumen von Hand: wird
- * ein Dokument endgueltig geloescht oder ein Tag entfernt, gehen seine
- * Zuordnungen mit.
+ * `ON DELETE CASCADE` in `outbox` erspart das Aufraeumen von Hand: wird ein
+ * Dokument endgueltig geloescht, geht sein offener Eintrag mit.
  */
 
 /**
  * Bei Aenderungen am Schema hochzaehlen. `user_version` steht in der Datei
  * selbst — daran erkennt der naechste Start, ob eine Migration faellig ist.
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export const DATABASE_NAME = 'kompendium.db';
 
@@ -64,19 +70,12 @@ CREATE TABLE IF NOT EXISTS documents (
   storage_path TEXT,
   -- Pruefsumme des Inhalts, wie sie oben steht. Aendert sie sich, ist die
   -- gecachte Datei veraltet und wird beim naechsten Oeffnen neu geholt.
-  content_hash TEXT
-);
-
-CREATE TABLE IF NOT EXISTS tags (
-  id    TEXT PRIMARY KEY NOT NULL,
-  name  TEXT NOT NULL,
-  color TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS document_tags (
-  document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-  tag_id      TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-  PRIMARY KEY (document_id, tag_id)
+  content_hash TEXT,
+  -- Workflow-Status, Millisekunden wie ueberall sonst. NULL = ungelesen bzw.
+  -- nicht archiviert. Zwei Spalten statt einer, weil Archiv eine zweite Achse
+  -- ist: sonst ginge beim Entarchivieren verloren, dass gelesen wurde.
+  read_at      INTEGER,
+  archived_at  INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS folders (
@@ -87,6 +86,17 @@ CREATE TABLE IF NOT EXISTS folders (
   -- (siehe oben), oben ist es eine UUID — die Zuordnung muss irgendwo stehen,
   -- sonst landet beim naechsten Abgleich jedes Dokument im falschen Ordner.
   remote_id    TEXT
+);
+
+-- Der Weg nach oben: welche Dokumente lokal geaendert wurden und noch nicht
+-- in Supabase stehen.
+CREATE TABLE IF NOT EXISTS outbox (
+  document_id TEXT PRIMARY KEY NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+  -- JSON-Liste der geaenderten Feldnamen. Nicht die Werte: die stehen in
+  -- documents und sind dort immer der neueste Stand. Ein zweites Mal
+  -- gespeicherte Werte waeren eine zweite Wahrheit, die veralten kann.
+  fields      TEXT NOT NULL,
+  queued_at   INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -110,7 +120,6 @@ CREATE TABLE IF NOT EXISTS sync_state (
 -- aus; genau diese beiden Spalten stehen deshalb im Index.
 CREATE INDEX IF NOT EXISTS documents_by_recent ON documents (trashed_at, updated_at DESC);
 CREATE INDEX IF NOT EXISTS documents_by_folder ON documents (folder_name);
-CREATE INDEX IF NOT EXISTS document_tags_by_tag ON document_tags (tag_id);
 `;
 
 /**
@@ -125,6 +134,11 @@ CREATE INDEX IF NOT EXISTS document_tags_by_tag ON document_tags (tag_id);
  * vor 6 Tagen". `NULL` fuer alles Vorhandene ist richtig: wann diese
  * Dokumente zuletzt offen waren, weiss niemand mehr, und ein erfundenes
  * Datum waere schlechter als keins.
+ *
+ * Version 4: Workflow-Status statt Tags. Bestehende Zeilen starten mit
+ * `read_at = NULL`, sind also ungelesen — was vor dem Umbau gelesen wurde,
+ * weiss niemand mehr, und "alles gelesen" waere eine Behauptung. Dieselbe
+ * Zurueckhaltung wie bei `last_opened_at` in Version 2.
  */
 export const migrations: { to: number; sql: string }[] = [
   { to: 2, sql: 'ALTER TABLE documents ADD COLUMN last_opened_at INTEGER' },
@@ -137,5 +151,20 @@ export const migrations: { to: number; sql: string }[] = [
   {
     to: 3,
     sql: 'CREATE TABLE IF NOT EXISTS sync_state (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)',
+  },
+  // Version 4: der Workflow-Status loest die Tags ab. Reihenfolge beachten —
+  // `document_tags` haengt per Fremdschluessel an `tags`, und
+  // `PRAGMA foreign_keys` steht auf ON: die Zuordnung muss zuerst weg.
+  { to: 4, sql: 'ALTER TABLE documents ADD COLUMN read_at INTEGER' },
+  { to: 4, sql: 'ALTER TABLE documents ADD COLUMN archived_at INTEGER' },
+  { to: 4, sql: 'DROP TABLE IF EXISTS document_tags' },
+  { to: 4, sql: 'DROP TABLE IF EXISTS tags' },
+  {
+    to: 4,
+    sql: `CREATE TABLE IF NOT EXISTS outbox (
+      document_id TEXT PRIMARY KEY NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+      fields      TEXT NOT NULL,
+      queued_at   INTEGER NOT NULL
+    )`,
   },
 ];

@@ -3,7 +3,7 @@
  * Ueberlagerung ueber einem Beispiel-Bestand.
  *
  * Bis Schritt 6 lagen hier sieben Tabellen nebeneinander (`titles`,
- * `folderNames`, `tagIds`, `notes` …), weil es keine Datenbank gab, in die eine
+ * `folderNames`, `notes` …), weil es keine Datenbank gab, in die eine
  * geaenderte Zeile haette zurueckfliessen koennen. Mit expo-sqlite gibt es sie:
  * `documents` ist die Zeilenmenge aus der Datenbank, und jede Aenderung geht
  * denselben Weg — erst in diesen Zustand, dann ueber das Repository in die
@@ -13,27 +13,21 @@
  * Auch `favorite` liegt deshalb hier und nicht mehr im Bibliothek-Zustand: es
  * ist eine Spalte der Zeile. Die Regel "ein Schalter, ein Speicherort" gilt
  * weiter — der Speicherort ist jetzt die Zeile.
- *
- * Die Tag-Liste liegt mit hier, weil neue Tags im Tag-Sheet entstehen
- * (Kernflow `4e`).
  */
 import { create } from 'zustand';
 
 import { deleteDocument } from '../data/cache';
 import { persist } from '../data/db/persist';
 import * as repository from '../data/db/repository';
-import type { LibraryTag, StoredDocument } from '../data/library';
-import { tagColorNames, tagPalette } from '../theme/colors';
+import type { StoredDocument } from '../data/library';
 import { useViewerStore } from './viewer';
 
 interface DocumentState {
   /** Erst nach dem Laden aus der Datenbank darf ein Screen "leer" zeigen. */
   hydrated: boolean;
   documents: StoredDocument[];
-  /** Alle bekannten Tags, inklusive der im Tag-Sheet angelegten. */
-  tags: LibraryTag[];
 
-  hydrate: (documents: StoredDocument[], tags: LibraryTag[]) => void;
+  hydrate: (documents: StoredDocument[]) => void;
 
   setTitle: (documentId: string, title: string) => void;
   setNote: (documentId: string, note: string) => void;
@@ -46,6 +40,13 @@ interface DocumentState {
   toggleFavorite: (documentId: string) => void;
   /** Mehrere auf einmal — die Auswahl-Aktionsleiste setzt, sie schaltet nicht um. */
   setFavorite: (documentIds: string[], value: boolean) => void;
+
+  /** Setzen, nicht umschalten — bei gemischter Auswahl waere Umschalten nicht vorhersagbar. */
+  setRead: (documentIds: string[], value: boolean) => void;
+  setArchived: (documentIds: string[], value: boolean) => void;
+  /** Die Wischgeste trifft genau eine Zeile und kennt deren Zustand. */
+  toggleRead: (documentId: string) => void;
+  toggleArchived: (documentId: string) => void;
 
   /** Einzeln oder als Mehrfachauswahl: Dokumente in einen Ordner legen. */
   setFolder: (documentIds: string[], folderName: string | null) => void;
@@ -70,31 +71,6 @@ interface DocumentState {
 
   /** Ein importiertes Dokument aufnehmen (Blatt `3g`). */
   addDocument: (document: StoredDocument) => void;
-
-  assignTag: (documentId: string, tagId: string) => void;
-  removeTag: (documentId: string, tagId: string) => void;
-  /** Legt einen Tag an und gibt ihn zurueck; ein vorhandener Name gewinnt. */
-  createTag: (name: string) => LibraryTag;
-  /** Tag-Verwaltung: benennt um, ohne den Ausweis zu aendern. */
-  renameTag: (tagId: string, name: string) => void;
-  /** Tag-Verwaltung: entfernt den Tag ueberall — sonst blieben tote Ausweise. */
-  deleteTag: (tagId: string) => void;
-  /** Zuruecknehmen eines geloeschten Tags (Toast "Rueckgaengig"). */
-  restoreTag: (tag: LibraryTag, documentIds: string[]) => void;
-}
-
-/**
- * Ein neuer Tag bekommt die naechste Farbe der Palette. Reihum statt zufaellig:
- * derselbe Name ergibt bei gleichem Bestand dieselbe Farbe, und zwei kurz
- * nacheinander angelegte Tags sind sicher unterscheidbar.
- */
-function nextTagColor(count: number): string {
-  return tagPalette[tagColorNames[count % tagColorNames.length]];
-}
-
-/** Ausweis aus dem Namen — kleingeschrieben, ohne Leerzeichen. */
-function tagIdFromName(name: string): string {
-  return name.trim().toLowerCase().replace(/\s+/g, '-');
 }
 
 /**
@@ -137,16 +113,15 @@ function patch(
   );
 }
 
-export const useDocumentStore = create<DocumentState>((set, get) => ({
+export const useDocumentStore = create<DocumentState>((set) => ({
   hydrated: false,
   documents: [],
-  tags: [],
 
-  hydrate: (documents, tags) => set({ documents, tags, hydrated: true }),
+  hydrate: (documents) => set({ documents, hydrated: true }),
 
   /**
    * Titel und Notiz sind Aenderungen AM Dokument und ruecken es damit in
-   * "Zuletzt geaendert" nach vorn. Ordner, Tags und Favorit dagegen sagen
+   * "Zuletzt geaendert" nach vorn. Ordner und Favorit dagegen sagen
    * etwas ueber die Ablage, nicht ueber den Inhalt — sie lassen `updatedAt`
    * in Ruhe, sonst waere die Liste nach jedem Einsortieren neu gemischt.
    */
@@ -201,6 +176,44 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   setFavorite: (documentIds, favorite) =>
     set((state) => ({ documents: patch(state.documents, documentIds, { favorite }) })),
+
+  /**
+   * `readAt` und `archivedAt` lassen `updatedAt` in Ruhe — wie Ordner und
+   * Favorit sagen sie etwas ueber die Ablage, nicht ueber den Inhalt. Sonst
+   * waere "Zuletzt geaendert" nach jedem Wischen neu gemischt, und die Zeile
+   * spraenge unter dem Finger weg.
+   */
+  setRead: (documentIds, value) =>
+    set((state) => ({
+      documents: patch(state.documents, documentIds, { readAt: value ? Date.now() : null }),
+    })),
+
+  setArchived: (documentIds, value) =>
+    set((state) => ({
+      documents: patch(state.documents, documentIds, { archivedAt: value ? Date.now() : null }),
+    })),
+
+  toggleRead: (documentId) =>
+    set((state) => {
+      const current = state.documents.find((document) => document.id === documentId);
+      if (current === undefined) return state;
+      return {
+        documents: patch(state.documents, [documentId], {
+          readAt: current.readAt === null ? Date.now() : null,
+        }),
+      };
+    }),
+
+  toggleArchived: (documentId) =>
+    set((state) => {
+      const current = state.documents.find((document) => document.id === documentId);
+      if (current === undefined) return state;
+      return {
+        documents: patch(state.documents, [documentId], {
+          archivedAt: current.archivedAt === null ? Date.now() : null,
+        }),
+      };
+    }),
 
   setFolder: (documentIds, folderName) =>
     set((state) => ({ documents: patch(state.documents, documentIds, { folderName }) })),
@@ -264,97 +277,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       persist(() => repository.insertDocument(document));
       return { documents: [document, ...state.documents] };
     }),
-
-  assignTag: (documentId, tagId) =>
-    set((state) => {
-      const current = state.documents.find((document) => document.id === documentId);
-      if (current === undefined || current.tagIds.includes(tagId)) return state;
-
-      const tagIds = [...current.tagIds, tagId];
-      persist(() => repository.setDocumentTags(documentId, tagIds));
-      return {
-        documents: state.documents.map((document) =>
-          document.id === documentId ? { ...document, tagIds } : document
-        ),
-      };
-    }),
-
-  removeTag: (documentId, tagId) =>
-    set((state) => {
-      const current = state.documents.find((document) => document.id === documentId);
-      if (current === undefined || !current.tagIds.includes(tagId)) return state;
-
-      const tagIds = current.tagIds.filter((entry) => entry !== tagId);
-      persist(() => repository.setDocumentTags(documentId, tagIds));
-      return {
-        documents: state.documents.map((document) =>
-          document.id === documentId ? { ...document, tagIds } : document
-        ),
-      };
-    }),
-
-  createTag: (name) => {
-    const trimmed = name.trim();
-    const existing = get().tags.find((tag) => tag.name.toLowerCase() === trimmed.toLowerCase());
-    if (existing) return existing;
-
-    const tag: LibraryTag = {
-      id: tagIdFromName(trimmed),
-      name: trimmed,
-      color: nextTagColor(get().tags.length),
-    };
-    persist(() => repository.upsertTag(tag));
-    set((state) => ({ tags: [...state.tags, tag] }));
-    return tag;
-  },
-
-  /**
-   * Der Ausweis bleibt, nur der Name aendert sich. Sonst muessten alle
-   * Dokumente umgeschrieben werden, und ein Aussetzer mittendrin liesse Tags
-   * zurueck, die es nicht mehr gibt.
-   */
-  renameTag: (tagId, name) =>
-    set((state) => {
-      const tag = state.tags.find((entry) => entry.id === tagId);
-      if (tag === undefined) return state;
-
-      const renamed = { ...tag, name: name.trim() };
-      persist(() => repository.upsertTag(renamed));
-      return { tags: state.tags.map((entry) => (entry.id === tagId ? renamed : entry)) };
-    }),
-
-  deleteTag: (tagId) =>
-    set((state) => {
-      persist(() => repository.deleteTag(tagId));
-      return {
-        tags: state.tags.filter((tag) => tag.id !== tagId),
-        documents: state.documents.map((document) =>
-          document.tagIds.includes(tagId)
-            ? { ...document, tagIds: document.tagIds.filter((entry) => entry !== tagId) }
-            : document
-        ),
-      };
-    }),
-
-  restoreTag: (tag, documentIds) =>
-    set((state) => {
-      const affected = new Set(documentIds);
-      persist(async () => {
-        await repository.upsertTag(tag);
-        for (const id of documentIds) {
-          const document = get().documents.find((entry) => entry.id === id);
-          if (document) await repository.setDocumentTags(id, document.tagIds);
-        }
-      });
-      return {
-        tags: [...state.tags, tag],
-        documents: state.documents.map((document) =>
-          affected.has(document.id) && !document.tagIds.includes(tag.id)
-            ? { ...document, tagIds: [...document.tagIds, tag.id] }
-            : document
-        ),
-      };
-    }),
 }));
 
 /** Ein Dokument aus dem Bestand holen — der Viewer bekommt nur den Ausweis. */
@@ -365,4 +287,4 @@ export function documentById(
   return documents.find((document) => document.id === id);
 }
 
-export { documentTags, isTrashed } from '../data/library';
+export { isArchived, isTrashed, isUnread, isVisible } from '../data/library';

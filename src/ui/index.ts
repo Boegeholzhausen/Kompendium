@@ -4,7 +4,6 @@
  *   01 Dokumentzeile          DocRow
  *   02 Dokumentkarte          DocCard
  *   03 Ordner-Kachel          FolderTile, CreateFolderTile
- *   04 Tag-Chip               TagChip, AddTagChip
  *   05 Filter-Chip            FilterChip
  *   06 Suchfeld               SearchField
  *   07 Sektionskopf           SectionHeader
@@ -34,12 +33,12 @@
  * Ergaenzt in Schritt 6 — alles Formen, die in mehreren Blaettern vorkommen und
  * deshalb nicht in einen Screen gehoeren:
  *
- *   ChoiceSheet      Auswahlliste im Sheet (Sortierung, Tag- und Zeitfilter)
+ *   ChoiceSheet      Auswahlliste im Sheet (Sortierung, Ordner- und Zeitfilter)
  *   ScreenHeader     `TitleHeader` (3a, 3f) und `CompactHeader` (3b, 6a)
- *   HighlightedText  mint hinterlegte Fundstelle (3d und Tag-Sheet)
- *   RenameSheet      Blatt `6d`, laut Handoff identisch fuer Ordner und Tags
- *   SwipeRow         Wischaktionen der Tag-Verwaltung (`3f`)
- *   PillButton       sekundaere Pille "+ Neuer Tag" im Kopf von `3f`
+ *   HighlightedText  mint hinterlegte Fundstelle (3d)
+ *   RenameSheet      Blatt `6d`, Umbenennen von Ordnern
+ *   PillButton       sekundaere Pille im Kopf eines Verwaltungs-Screens
+ *   SwipeActions     Wischgeste mit sofortiger Wirkung (Workflow-Status)
  *
  * Ergaenzt in Schritt 7 — die Formen der Einstellungen:
  *
@@ -53,8 +52,8 @@ export * from './DocTile';
 export * from './DocRow';
 export * from './DocCard';
 export * from './FolderTile';
-export * from './TagChip';
 export * from './FilterChip';
+export * from './SwipeActions';
 export * from './SearchField';
 export * from './SectionHeader';
 export * from './BottomSheet';
@@ -72,7 +71,6 @@ export * from './ChoiceSheet';
 export * from './ScreenHeader';
 export * from './HighlightedText';
 export * from './RenameSheet';
-export * from './SwipeRow';
 export * from './SettingsList';
 export * from './Slider';
 export * as Icons from './icons';

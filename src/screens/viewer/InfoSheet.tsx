@@ -2,12 +2,16 @@
  * Screen 7 · Info-Sheet (Blatt `2d`).
  *
  * Bottom-Sheet ueber dem Viewer, Hoehe etwa 75 %. Die Reihenfolge folgt der
- * Haeufigkeit: Titel, Ordner, Tags, Notiz, "Offline behalten", zuletzt die
- * Metadaten — abgelesen wird selten, sortiert oft.
+ * Haeufigkeit: Titel, Ordner, Notiz, die drei Schalter ("Gelesen",
+ * "Archiviert", "Offline behalten"), zuletzt die Metadaten — abgelesen wird
+ * selten, sortiert oft.
+ *
+ * Die beiden Status-Schalter sind der **gestenfreie Weg** im Viewer: dieselbe
+ * Wirkung wie die Wischgeste in der Liste, nur ohne Geste.
  *
  * "In den Papierkorb" steht **ausserhalb** des scrollenden Bereichs hinter
  * einer eigenen Trennlinie: es darf nie unter den Daumen rutschen, waehrend
- * jemand Tags setzt.
+ * jemand etwas einstellt.
  *
  * Titel und Notiz haben einen **eigenen Zustand im Sheet**. Nach draussen
  * gemeldet wird gedrosselt (fruehestens alle 600 ms) und in jedem Fall beim
@@ -19,7 +23,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, TextInput, View } from 'react-native';
 
 import { formatBytes, formatDate, formatRelative } from '../../data/format';
-import { sourceLabels, type LibraryTag, type StoredDocument } from '../../data/library';
+import { sourceLabels, type StoredDocument } from '../../data/library';
 import {
   bg,
   border,
@@ -35,7 +39,6 @@ import { SheetLayer } from '../../ui/BottomSheet';
 import { CaretRight, Folder, PencilSimple, Trash, Tray } from '../../ui/icons';
 import { PressableScale } from '../../ui/press';
 import { Switch } from '../../ui/Switch';
-import { AddTagChip, TagChip } from '../../ui/TagChip';
 import { Text } from '../../ui/Text';
 
 /**
@@ -78,8 +81,10 @@ export interface InfoSheetProps {
   folderName: string | null;
   /** Farbe dieses Ordners; sie lebt im Ordner-Zustand, nicht am Dokument. */
   folderColor: string;
-  tags: LibraryTag[];
   note: string;
+  /** Workflow-Status; beide Achsen sind unabhaengig voneinander schaltbar. */
+  read: boolean;
+  archived: boolean;
   keepOffline: boolean;
   openCount: number;
   /**
@@ -94,8 +99,8 @@ export interface InfoSheetProps {
   onChangeNote: (note: string) => void;
   onChangeKeepOffline: (keep: boolean) => void;
   onOpenFolder: () => void;
-  onAddTag: () => void;
-  onRemoveTag: (tagId: string) => void;
+  onChangeRead: (read: boolean) => void;
+  onChangeArchived: (archived: boolean) => void;
   onTrash: () => void;
 }
 
@@ -105,8 +110,9 @@ export function InfoSheet({
   title,
   folderName,
   folderColor,
-  tags,
   note,
+  read,
+  archived,
   keepOffline,
   openCount,
   lastOpenedAt,
@@ -116,8 +122,8 @@ export function InfoSheet({
   onChangeNote,
   onChangeKeepOffline,
   onOpenFolder,
-  onAddTag,
-  onRemoveTag,
+  onChangeRead,
+  onChangeArchived,
   onTrash,
 }: InfoSheetProps) {
   // Die Herkunft steht seit Schritt 7 in der Zeile — bis dahin stand hier
@@ -259,22 +265,6 @@ export function InfoSheet({
           </PressableScale>
         </Field>
 
-        <Field label="Tags">
-          <View style={styles.chips}>
-            {tags.map((tag) => (
-              <TagChip
-                key={tag.id}
-                label={tag.name}
-                color={tag.color}
-                large
-                removable
-                onRemove={() => onRemoveTag(tag.id)}
-              />
-            ))}
-            <AddTagChip large onPress={onAddTag} />
-          </View>
-        </Field>
-
         <Field label="Notiz">
           <View style={[styles.box, styles.noteBox]}>
             <TextInput
@@ -292,6 +282,28 @@ export function InfoSheet({
             />
           </View>
         </Field>
+
+        <View style={styles.offlineRow}>
+          <View style={styles.offlineLabel}>
+            <Text variant="body">Gelesen</Text>
+          </View>
+          <Switch
+            value={read}
+            onValueChange={onChangeRead}
+            accessibilityLabel="Als gelesen markiert"
+          />
+        </View>
+
+        <View style={styles.offlineRow}>
+          <View style={styles.offlineLabel}>
+            <Text variant="body">Archiviert</Text>
+          </View>
+          <Switch
+            value={archived}
+            onValueChange={onChangeArchived}
+            accessibilityLabel="Archiviert"
+          />
+        </View>
 
         <View style={styles.offlineRow}>
           <View style={styles.offlineLabel}>
@@ -366,11 +378,6 @@ const styles = StyleSheet.create({
   },
   noteInput: {
     textAlignVertical: 'top',
-  },
-  chips: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: space['8'],
   },
   offlineRow: {
     flexDirection: 'row',

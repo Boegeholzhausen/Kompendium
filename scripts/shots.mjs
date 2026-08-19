@@ -41,16 +41,13 @@ await shot('02-viewer');
 await page.getByLabel('Info', { exact: true }).click();
 await shot('03-info-sheet');
 
-// Tag-Sheet ueber dem Info-Sheet.
-await page.getByLabel('Tag hinzufuegen').click();
-await shot('04-tag-sheet');
+// Der Workflow-Status im Info-Sheet — der gestenfreie Weg im Viewer. Im
+// Web-Bild gibt es keine Wischgeste, deshalb ist das hier die einzige
+// Fassung, die sich abbilden laesst.
+await page.getByLabel('Als gelesen markiert').click();
+await shot('04-gelesen-gesetzt');
 
-// Tippen filtert; die Fundstelle ist mint hinterlegt.
-await page.getByLabel('Suchbegriff').fill('re');
-await shot('05-tag-sheet-gefiltert');
-
-// Zuweisen setzt sofort und zeigt den Toast mit "Rueckgaengig".
-await page.getByLabel(/^Tag Recht/).click();
-await shot('06-tag-gesetzt');
+await page.getByLabel('Archiviert', { exact: true }).click();
+await shot('05-archiviert-gesetzt');
 
 await browser.close();

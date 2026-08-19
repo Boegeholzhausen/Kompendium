@@ -1,5 +1,5 @@
 /**
- * Screen 5 und 6 — Viewer (Blaetter `2b`, `2c`) samt Info- und Tag-Sheet.
+ * Screen 5 und 6 — Viewer (Blaetter `2b`, `2c`) samt Info-Sheet.
  *
  * Zweck: lesen. Die App muss verschwinden. Deshalb fuellt das Dokument den
  * Bildschirm randlos, und die Bedienung schwebt darueber statt im Layout zu
@@ -13,12 +13,11 @@
  *   Kopfzeile         80 hoch, Blur, blendet aus
  *   Aktionsbalken     schwebende Pille, blendet aus
  *   Info-Sheet        75 %, Scrim
- *   Tag-Sheet         darueber, ersetzt das Info-Sheet nicht
  *   Suchen-Sheet      "Im Dokument suchen", bleibt beim Blaettern offen
  *   Toast             ueber allem — er sichert das zuletzt Getane ab
  *
  * Die Sheets sind Ebenen dieses Screens und keine Modals: nur so laesst sich
- * die Reihenfolge Info → Tag → Toast zuverlaessig festlegen (siehe
+ * die Reihenfolge Info → Suchen → Toast zuverlaessig festlegen (siehe
  * `SheetLayer` in `ui/BottomSheet`).
  *
  * **Suchen im Dokument (D2/D3).** Der Auftrag geht als `FindCommand` an die
@@ -37,24 +36,24 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import * as Sharing from 'expo-sharing';
 
 import { documentUri, readDocument } from '../../data/cache';
-import type { LibraryTag } from '../../data/library';
 import { downloadDocument, needsDownload } from '../../data/remote/download';
 import { sampleDocumentHtml } from '../../data/sampleDocumentHtml';
 import { useAppearanceStore } from '../../state/appearance';
-import { documentById, documentTags, useDocumentStore } from '../../state/documents';
+import { documentById, useDocumentStore } from '../../state/documents';
 import { colorOf, useFolderStore } from '../../state/folders';
 import { useNetworkStore } from '../../state/network';
 import { flushScroll, useViewerStore } from '../../state/viewer';
 import { bg, scrollThreshold, size, space } from '../../theme';
 import { ContextMenu, type ContextMenuItem } from '../../ui/ContextMenu';
 import {
+  Archive,
+  Check,
   DownloadSimple,
   FolderOpen,
   Info,
   MagnifyingGlass,
   PencilSimple,
   ShareNetwork,
-  Tag,
   Trash,
   Warning,
   WifiSlash,
@@ -67,14 +66,13 @@ import { DocumentView, type FindCommand } from './DocumentView';
 import { FindSheet } from './FindSheet';
 import { InfoSheet } from './InfoSheet';
 import { OfflineNotice } from './OfflineNotice';
-import { INFO_SHEET_RATIO, TAG_SHEET_RATIO } from './metrics';
-import { TagSheet } from './TagSheet';
+import { INFO_SHEET_RATIO } from './metrics';
 import { ViewerActionBar, ViewerHeader } from './ViewerChrome';
 
 /** Was zuletzt geschah — der Toast bietet dafuer 5 Sekunden "Rueckgaengig". */
 interface UndoableAction {
   message: string;
-  /** Ohne Angabe das Tag-Symbol — die haeufigste Aktion im Viewer. */
+  /** Ohne Angabe der Haken — die neutrale Bestaetigung. */
   icon?: Icon;
   undo: () => void;
 }
@@ -103,14 +101,13 @@ export function ViewerScreen({ documentId, searchTerm, onBack }: ViewerScreenPro
   const allDocuments = useDocumentStore((state) => state.documents);
   const document = documentById(allDocuments, documentId);
 
-  const tags = useDocumentStore((state) => state.tags);
   const setTitle = useDocumentStore((state) => state.setTitle);
   const setNote = useDocumentStore((state) => state.setNote);
   const setKeepOffline = useDocumentStore((state) => state.setKeepOffline);
   const setFolder = useDocumentStore((state) => state.setFolder);
-  const assignTag = useDocumentStore((state) => state.assignTag);
-  const removeTag = useDocumentStore((state) => state.removeTag);
-  const createTag = useDocumentStore((state) => state.createTag);
+  const setRead = useDocumentStore((state) => state.setRead);
+  const setArchived = useDocumentStore((state) => state.setArchived);
+  const toggleArchived = useDocumentStore((state) => state.toggleArchived);
   const countOpen = useDocumentStore((state) => state.countOpen);
   const markCached = useDocumentStore((state) => state.markCached);
   const toggleFavorite = useDocumentStore((state) => state.toggleFavorite);
@@ -146,11 +143,8 @@ export function ViewerScreen({ documentId, searchTerm, onBack }: ViewerScreenPro
   const [chromeVisible, setChromeVisible] = useState(true);
   /** Der Inhalt aus dem Dateicache; `null`, solange er noch gelesen wird. */
   const [cachedHtml, setCachedHtml] = useState<string | null>(null);
-  const [activeSheet, setActiveSheet] = useState<null | 'info' | 'tags' | 'move' | 'find'>(
-    null
-  );
+  const [activeSheet, setActiveSheet] = useState<null | 'info' | 'move' | 'find'>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [tagQuery, setTagQuery] = useState('');
   const [undoable, setUndoable] = useState<UndoableAction | null>(null);
   /** Meldungen ohne "Rueckgaengig" — "Erneut versuchen", Teilen, Links. */
   const [plainNote, setPlainNote] = useState<PlainNote | null>(null);
@@ -251,17 +245,6 @@ export function ViewerScreen({ documentId, searchTerm, onBack }: ViewerScreenPro
   }, [countOpen, documentId, unreachable]);
 
   const title = document?.title ?? '';
-  const assigned = useMemo(() => document?.tagIds ?? [], [document]);
-  const assignedTags = useMemo(() => documentTags(tags, assigned), [tags, assigned]);
-
-  /** Anzahl der Dokumente je Tag — die Zahl rechts in der Tag-Zeile. */
-  const tagUsage = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const entry of allDocuments) {
-      for (const id of entry.tagIds) counts[id] = (counts[id] ?? 0) + 1;
-    }
-    return counts;
-  }, [allDocuments]);
 
   /**
    * Importierte Dokumente liegen als Datei im Cache und werden von dort
@@ -391,37 +374,20 @@ export function ViewerScreen({ documentId, searchTerm, onBack }: ViewerScreenPro
     setPlainNote({ message: 'Link ließ sich nicht öffnen', icon: Warning });
   }, []);
 
-  const toggleTag = useCallback(
-    (tag: LibraryTag) => {
-      if (assigned.includes(tag.id)) {
-        removeTag(documentId, tag.id);
-        setUndoable({
-          message: `Tag „${tag.name}“ entfernt`,
-          undo: () => assignTag(documentId, tag.id),
-        });
-        return;
-      }
-      assignTag(documentId, tag.id);
-      setUndoable({
-        message: `Tag „${tag.name}“ gesetzt`,
-        undo: () => removeTag(documentId, tag.id),
-      });
-    },
-    [assigned, assignTag, documentId, removeTag]
-  );
-
-  const handleCreateTag = useCallback(
-    (name: string) => {
-      const tag = createTag(name);
-      assignTag(documentId, tag.id);
-      setTagQuery('');
-      setUndoable({
-        message: `Tag „${tag.name}“ gesetzt`,
-        undo: () => removeTag(documentId, tag.id),
-      });
-    },
-    [assignTag, createTag, documentId, removeTag]
-  );
+  /**
+   * Archivieren aus dem Viewer heraus. Anders als der Favorit bekommt es einen
+   * Toast: die Zeile verschwindet danach aus der Liste, und das ist eine
+   * Wirkung ausserhalb dieses Screens.
+   */
+  const handleArchive = useCallback(() => {
+    const wasArchived = document?.archivedAt !== null;
+    toggleArchived(documentId);
+    setUndoable({
+      message: wasArchived ? 'Aus dem Archiv geholt' : 'Archiviert',
+      icon: Archive,
+      undo: () => setArchived([documentId], wasArchived),
+    });
+  }, [document?.archivedAt, documentId, setArchived, toggleArchived]);
 
   /**
    * "Erneut versuchen". Einen echten Abruf gibt es noch nicht (der Sync
@@ -570,18 +536,20 @@ export function ViewerScreen({ documentId, searchTerm, onBack }: ViewerScreenPro
         favorite={favorite}
         // Kein Toast: der Zustand ist am Stern selbst zu sehen.
         onToggleFavorite={() => toggleFavorite(documentId)}
-        onTags={() => setActiveSheet('tags')}
+        onArchive={handleArchive}
+        archived={document.archivedAt !== null}
         onShare={handleShare}
         onInfo={() => setActiveSheet('info')}
       />
       )}
 
       <InfoSheet
-        visible={activeSheet === 'info' || activeSheet === 'tags'}
+        visible={activeSheet === 'info'}
         document={document}
         title={title}
-        tags={assignedTags}
         note={document.note}
+        read={document.readAt !== null}
+        archived={document.archivedAt !== null}
         keepOffline={document.keepOffline}
         openCount={document.openCount}
         lastOpenedAt={openedBefore.current ?? null}
@@ -593,23 +561,9 @@ export function ViewerScreen({ documentId, searchTerm, onBack }: ViewerScreenPro
         onChangeNote={(next) => setNote(documentId, next)}
         onChangeKeepOffline={(next) => setKeepOffline(documentId, next)}
         onOpenFolder={() => setActiveSheet('move')}
-        onAddTag={() => setActiveSheet('tags')}
-        onRemoveTag={(tagId) => removeTag(documentId, tagId)}
+        onChangeRead={(next) => setRead([documentId], next)}
+        onChangeArchived={(next) => setArchived([documentId], next)}
         onTrash={handleTrash}
-      />
-
-      <TagSheet
-        visible={activeSheet === 'tags'}
-        query={tagQuery}
-        onChangeQuery={setTagQuery}
-        tags={tags}
-        assigned={assigned}
-        usage={tagUsage}
-        height={Math.round(windowHeight * TAG_SHEET_RATIO)}
-        onToggle={toggleTag}
-        onCreate={handleCreateTag}
-        onRemove={(tagId) => removeTag(documentId, tagId)}
-        onClose={() => setActiveSheet('info')}
       />
 
       <MoveSheet
@@ -649,7 +603,7 @@ export function ViewerScreen({ documentId, searchTerm, onBack }: ViewerScreenPro
       <Toast
         visible={undoable !== null || plainNote !== null}
         message={plainNote?.message ?? undoable?.message ?? ''}
-        icon={plainNote?.icon ?? undoable?.icon ?? Tag}
+        icon={plainNote?.icon ?? undoable?.icon ?? Check}
         // Ein fehlgeschlagener Versuch hat nichts, was sich zuruecknehmen
         // liesse — eine Schaltflaeche ohne Wirkung waere schlimmer als keine.
         actionLabel={plainNote === null ? 'Rückgängig' : undefined}

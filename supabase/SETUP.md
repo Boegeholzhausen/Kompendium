@@ -37,7 +37,7 @@ Was das Skript anlegt (und was du danach prüfen kannst):
 
 | Bestandteil | Wozu | Wo prüfen |
 |---|---|---|
-| Tabellen `folders`, `documents`, `tags`, `document_tags` | Datenmodell der App (Ablage im Storage, Ordnung in diesen Tabellen — trennt sich bewusst) | **Table Editor** |
+| Tabellen `folders`, `documents` | Datenmodell der App (Ablage im Storage, Ordnung in diesen Tabellen — trennt sich bewusst) | **Table Editor** |
 | Volltextsuche deutsch auf `documents.search_vector` (generierte Spalte, gewichtet: Titel > Beschreibung > Vorschautext) + GIN-Index | Suche findet auch gebeugte Wortformen | **Database → Indexes** |
 | `touch_updated_at`-Trigger auf allen vier Tabellen | Zeitstempel wird bei jedem Update automatisch gesetzt, das Pull-Wasserzeichen der App verlässt sich darauf | **Database → Triggers** |
 | RLS-Policies (`<tabelle>_owner`) auf `owner_id = auth.uid()` | Jeder Nutzer sieht ausschließlich eigene Zeilen | **Authentication → Policies** |

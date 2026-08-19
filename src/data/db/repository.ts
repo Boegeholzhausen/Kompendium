@@ -25,16 +25,14 @@ import {
 } from 'expo-sqlite';
 
 import { seedFolders, seedLibrary } from '../sampleLibrary';
-import { libraryTags } from '../sampleLibrary';
 import { isSupabaseConfigured } from '../supabase';
-import type { LibraryFolder, LibraryTag, StoredDocument } from '../library';
+import type { LibraryFolder, StoredDocument } from '../library';
 import type { DocType } from '../../theme/tile';
 import { createSchemaSql, DATABASE_NAME, migrations, SCHEMA_VERSION } from './schema';
 
 export interface Snapshot {
   documents: StoredDocument[];
   folders: LibraryFolder[];
-  tags: LibraryTag[];
   settings: Record<string, string>;
 }
 
@@ -54,6 +52,8 @@ export interface DocumentPatch {
   cacheKey?: string | null;
   storagePath?: string | null;
   contentHash?: string | null;
+  readAt?: number | null;
+  archivedAt?: number | null;
 }
 
 interface DocumentRow {
@@ -75,6 +75,8 @@ interface DocumentRow {
   cache_key: string | null;
   storage_path: string | null;
   content_hash: string | null;
+  read_at: number | null;
+  archived_at: number | null;
 }
 
 /** Spaltenname je Feld des Patches — die einzige Stelle mit dieser Zuordnung. */
@@ -93,6 +95,8 @@ const columns: Record<keyof DocumentPatch, string> = {
   cacheKey: 'cache_key',
   storagePath: 'storage_path',
   contentHash: 'content_hash',
+  readAt: 'read_at',
+  archivedAt: 'archived_at',
 };
 
 let handle: Promise<SQLiteDatabase> | null = null;
@@ -166,13 +170,6 @@ async function seedIfEmpty(db: SQLiteDatabase): Promise<void> {
   if ((rows[0]?.count ?? 0) > 0) return;
 
   await db.withTransactionAsync(async () => {
-    for (const tag of libraryTags) {
-      await db.runAsync('INSERT INTO tags (id, name, color) VALUES (?, ?, ?)', [
-        tag.id,
-        tag.name,
-        tag.color,
-      ]);
-    }
     for (const folder of seedFolders) {
       await db.runAsync('INSERT INTO folders (name, color, keep_offline) VALUES (?, ?, ?)', [
         folder.name,
@@ -191,8 +188,9 @@ async function insertRow(db: SQLiteDatabase, document: StoredDocument): Promise<
     `INSERT OR REPLACE INTO documents
        (id, title, doc_type, folder_name, favorite, cached, size_bytes,
         updated_at, imported_at, open_count, last_opened_at, note, keep_offline,
-        trashed_at, source, cache_key, storage_path, content_hash)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        trashed_at, source, cache_key, storage_path, content_hash, read_at,
+        archived_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       document.id,
       document.title,
@@ -212,25 +210,18 @@ async function insertRow(db: SQLiteDatabase, document: StoredDocument): Promise<
       document.cacheKey,
       document.storagePath,
       document.contentHash,
+      document.readAt,
+      document.archivedAt,
     ]
   );
-
-  await db.runAsync('DELETE FROM document_tags WHERE document_id = ?', [document.id]);
-  for (const tagId of document.tagIds) {
-    await db.runAsync('INSERT OR IGNORE INTO document_tags (document_id, tag_id) VALUES (?, ?)', [
-      document.id,
-      tagId,
-    ]);
-  }
 }
 
-function toDocument(row: DocumentRow, tagIds: string[]): StoredDocument {
+function toDocument(row: DocumentRow): StoredDocument {
   return {
     id: row.id,
     title: row.title,
     docType: row.doc_type as DocType,
     folderName: row.folder_name,
-    tagIds,
     favorite: row.favorite === 1,
     cached: row.cached === 1,
     sizeBytes: row.size_bytes,
@@ -245,35 +236,27 @@ function toDocument(row: DocumentRow, tagIds: string[]): StoredDocument {
     cacheKey: row.cache_key,
     storagePath: row.storage_path,
     contentHash: row.content_hash,
+    readAt: row.read_at,
+    archivedAt: row.archived_at,
   };
 }
 
 export async function loadSnapshot(): Promise<Snapshot> {
   const db = await database();
 
-  const [documentRows, pairs, tagRows, folderRows, settingRows] = await Promise.all([
+  const [documentRows, folderRows, settingRows] = await Promise.all([
     db.getAllAsync<DocumentRow>('SELECT * FROM documents'),
-    db.getAllAsync<{ document_id: string; tag_id: string }>('SELECT * FROM document_tags'),
-    db.getAllAsync<{ id: string; name: string; color: string }>('SELECT * FROM tags'),
     db.getAllAsync<{ name: string; color: string; keep_offline: number }>('SELECT * FROM folders'),
     db.getAllAsync<{ key: string; value: string }>('SELECT * FROM settings'),
   ]);
 
-  const tagsByDocument = new Map<string, string[]>();
-  for (const pair of pairs) {
-    const list = tagsByDocument.get(pair.document_id);
-    if (list) list.push(pair.tag_id);
-    else tagsByDocument.set(pair.document_id, [pair.tag_id]);
-  }
-
   return {
-    documents: documentRows.map((row) => toDocument(row, tagsByDocument.get(row.id) ?? [])),
+    documents: documentRows.map(toDocument),
     folders: folderRows.map((row) => ({
       name: row.name,
       color: row.color,
       keepOffline: row.keep_offline === 1,
     })),
-    tags: tagRows,
     settings: Object.fromEntries(settingRows.map((row) => [row.key, row.value])),
   };
 }
@@ -293,22 +276,15 @@ export async function updateDocuments(ids: string[], patch: DocumentPatch): Prom
   const values = keys.map((key) => toBind(patch[key]));
   const placeholders = ids.map(() => '?').join(', ');
 
-  await db.runAsync(`UPDATE documents SET ${assignments} WHERE id IN (${placeholders})`, [
-    ...values,
-    ...ids,
-  ]);
-}
-
-export async function setDocumentTags(documentId: string, tagIds: string[]): Promise<void> {
-  const db = await database();
+  // Schreiben und Einreihen gehoeren zusammen: eine Aenderung, die in
+  // `documents` steht, aber nicht in der Outbox, ginge beim naechsten Abruf
+  // still verloren.
   await db.withTransactionAsync(async () => {
-    await db.runAsync('DELETE FROM document_tags WHERE document_id = ?', [documentId]);
-    for (const tagId of tagIds) {
-      await db.runAsync('INSERT OR IGNORE INTO document_tags (document_id, tag_id) VALUES (?, ?)', [
-        documentId,
-        tagId,
-      ]);
-    }
+    await db.runAsync(`UPDATE documents SET ${assignments} WHERE id IN (${placeholders})`, [
+      ...values,
+      ...ids,
+    ]);
+    await queueForPush(db, ids, keys);
   });
 }
 
@@ -377,27 +353,156 @@ export async function deleteFolder(name: string): Promise<void> {
   });
 }
 
-export async function upsertTag(tag: LibraryTag): Promise<void> {
-  const db = await database();
-  await db.runAsync('INSERT OR REPLACE INTO tags (id, name, color) VALUES (?, ?, ?)', [
-    tag.id,
-    tag.name,
-    tag.color,
-  ]);
-}
-
-/** Die Zuordnungen gehen ueber `ON DELETE CASCADE` von selbst mit. */
-export async function deleteTag(tagId: string): Promise<void> {
-  const db = await database();
-  await db.runAsync('DELETE FROM tags WHERE id = ?', [tagId]);
-}
-
 export async function setSetting(key: string, value: string): Promise<void> {
   const db = await database();
   await db.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [key, value]);
 }
 
 // ── Abgleich mit Supabase ───────────────────────────────────────────────────
+
+// ── Outbox: der Weg nach oben ───────────────────────────────────────────────
+
+/**
+ * Felder, die nach oben gehoeren. Alles andere beschreibt dieses Geraet:
+ * `cached`, `cacheKey` und `sizeBytes` sagen etwas ueber die Datei, die hier
+ * liegt, `storagePath` und `contentHash` kommen ohnehin vom Server, und
+ * `updatedAt` setzt oben der Server (siehe `remote/push.ts`).
+ */
+const PUSHABLE: (keyof DocumentPatch)[] = [
+  'title',
+  'folderName',
+  'favorite',
+  'note',
+  'keepOffline',
+  'trashedAt',
+  'openCount',
+  'lastOpenedAt',
+  'readAt',
+  'archivedAt',
+];
+
+/** Ein offener Eintrag, mit allem, was `pushChanges` daraus bauen muss. */
+export interface OutboxEntry {
+  documentId: string;
+  fields: (keyof DocumentPatch)[];
+  queuedAt: number;
+  document: StoredDocument;
+  /** Ausweis des Ordners oben; `null`, wenn der Ordner nur lokal existiert. */
+  folderRemoteId: string | null;
+}
+
+interface OutboxRow extends DocumentRow {
+  outbox_fields: string;
+  outbox_queued_at: number;
+  folder_remote_id: string | null;
+}
+
+/**
+ * Eine Aenderung fuer den Weg nach oben vormerken.
+ *
+ * Das passiert ausschliesslich hier, in `updateDocuments` — dort laeuft jede
+ * Aenderung eines Screens durch, und damit gibt es genau eine Stelle, an der
+ * nichts vergessen werden kann.
+ */
+async function queueForPush(
+  db: SQLiteDatabase,
+  ids: string[],
+  keys: (keyof DocumentPatch)[]
+): Promise<void> {
+  const fields = keys.filter((key) => PUSHABLE.includes(key));
+  if (fields.length === 0) return;
+
+  const placeholders = ids.map(() => '?').join(', ');
+  // Nur Zeilen, die es oben schon gibt. Eine Zeile ohne `storage_path` war nie
+  // oben: ein `update` traefe dort nichts, und ein `insert` erzeugte eine
+  // Zeile ohne Datei. Solche Dokumente bleiben lokal, bis es die
+  // Hochlade-Richtung fuer Dateien gibt (README, "Abweichungen").
+  const rows = await db.getAllAsync<{ id: string; fields: string | null }>(
+    `SELECT d.id AS id, o.fields AS fields
+       FROM documents d LEFT JOIN outbox o ON o.document_id = d.id
+      WHERE d.id IN (${placeholders}) AND d.storage_path IS NOT NULL`,
+    ids
+  );
+  if (rows.length === 0) return;
+
+  const now = Date.now();
+  for (const row of rows) {
+    // Vereinigung in TypeScript statt in SQL: JSON-Listen zu mischen ist
+    // nichts, was SQLite verlaesslich kann, und die Menge ist winzig.
+    const before = parseFields(row.fields);
+    const merged = [...new Set([...before, ...fields])];
+    await db.runAsync(
+      'INSERT OR REPLACE INTO outbox (document_id, fields, queued_at) VALUES (?, ?, ?)',
+      [row.id, JSON.stringify(merged), now]
+    );
+  }
+}
+
+/** Die Feldliste eines Eintrags; ein kaputter Text ist kein Grund zum Absturz. */
+function parseFields(value: string | null): (keyof DocumentPatch)[] {
+  if (value === null) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (entry): entry is keyof DocumentPatch =>
+        typeof entry === 'string' && PUSHABLE.includes(entry as keyof DocumentPatch)
+    );
+  } catch {
+    return [];
+  }
+}
+
+export async function readOutbox(): Promise<OutboxEntry[]> {
+  const db = await database();
+  const rows = await db.getAllAsync<OutboxRow>(
+    `SELECT d.*, o.fields AS outbox_fields, o.queued_at AS outbox_queued_at,
+            f.remote_id AS folder_remote_id
+       FROM outbox o
+       JOIN documents d ON d.id = o.document_id
+       LEFT JOIN folders f ON f.name = d.folder_name
+      ORDER BY o.queued_at ASC`
+  );
+
+  return rows.map((row) => ({
+    documentId: row.id,
+    fields: parseFields(row.outbox_fields),
+    queuedAt: row.outbox_queued_at,
+    document: toDocument(row),
+    folderRemoteId: row.folder_remote_id,
+  }));
+}
+
+/**
+ * Erledigte Eintraege entfernen — aber nur, wenn seither nichts Neues dazukam.
+ *
+ * `queued_at` ist dabei der Ausweis des Standes: hat der Nutzer waehrend des
+ * Hochschickens noch einmal gewischt, steht dort ein neuerer Wert, und der
+ * Eintrag bleibt fuer den naechsten Lauf stehen. Ohne diese Bedingung ginge
+ * genau die Aenderung verloren, die im ungluecklichsten Moment kam.
+ */
+export async function clearOutbox(
+  entries: { documentId: string; queuedAt: number }[]
+): Promise<void> {
+  if (entries.length === 0) return;
+  const db = await database();
+  await db.withTransactionAsync(async () => {
+    for (const entry of entries) {
+      await db.runAsync('DELETE FROM outbox WHERE document_id = ? AND queued_at = ?', [
+        entry.documentId,
+        entry.queuedAt,
+      ]);
+    }
+  });
+}
+
+/** Wie viele Aenderungen noch offen sind — die Grundlage von `pending`. */
+export async function countOutbox(): Promise<number> {
+  const db = await database();
+  const rows = await db.getAllAsync<{ count: number }>('SELECT COUNT(*) AS count FROM outbox');
+  return rows[0]?.count ?? 0;
+}
+
 
 /**
  * Was der Abgleich sich merkt. Zwei Schluessel, beide in `sync_state`:
@@ -428,17 +533,14 @@ export async function writeSyncState(key: SyncStateKey, value: string): Promise<
  * Der einmalige Schnitt: alles Lokale weg, damit der erste Abgleich auf einer
  * leeren Flaeche aufsetzt.
  *
- * Betroffen sind Dokumente, Tags und Ordner — nicht `settings`: Darstellung,
+ * Betroffen sind Dokumente und Ordner — nicht `settings`: Darstellung,
  * Sortierung und Textgroesse gehoeren dem Geraet, nicht dem Bestand, und sie
  * beim Umstieg zurueckzusetzen waere ein Verlust ohne Gegenwert.
- *
- * `document_tags` geht ueber `ON DELETE CASCADE` von selbst mit.
  */
 export async function clearLibrary(): Promise<void> {
   const db = await database();
   await db.withTransactionAsync(async () => {
     await db.runAsync('DELETE FROM documents');
-    await db.runAsync('DELETE FROM tags');
     await db.runAsync('DELETE FROM folders');
   });
 }
@@ -470,14 +572,13 @@ export interface RemoteDocument {
   source: StoredDocument['source'];
   storagePath: string | null;
   contentHash: string | null;
+  readAt: number | null;
+  archivedAt: number | null;
 }
 
 export interface RemoteSnapshot {
   folders: RemoteFolder[];
   documents: RemoteDocument[];
-  tags: { id: string; name: string; color: string; deleted: boolean }[];
-  /** Zuordnungen; `deleted` heisst: das Tag wurde vom Dokument genommen. */
-  documentTags: { documentId: string; tagId: string; deleted: boolean }[];
 }
 
 /**
@@ -490,7 +591,26 @@ export interface RemoteSnapshot {
  * beschreiben dieses Geraet — welche Datei hier liegt, weiss der Server nicht
  * und soll es nicht bestimmen. Ein Abruf, der `cached` ueberschreibt, wuerde
  * eine vorhandene Datei fuer nicht vorhanden erklaeren.
+ *
+ * Und: eine Zeile mit offenem Outbox-Eintrag behaelt ihre Nutzerfelder. Der
+ * lokale Stand ist dort der juengere — er wartet nur darauf, hochgeschickt zu
+ * werden (siehe `mine` unten).
  */
+/**
+ * Ein Zuweisungsausdruck fuer `ON CONFLICT DO UPDATE`, der den lokalen Wert
+ * behaelt, solange fuer diese Zeile ein Outbox-Eintrag offen ist.
+ *
+ * Als Funktion und nicht zehnmal ausgeschrieben, damit die Regel an genau
+ * einer Stelle steht — eine Spalte, die man beim Abschreiben vergisst, waere
+ * eine, die der Abruf still zuruecksetzt.
+ */
+function mine(column: string): string {
+  return (
+    `CASE WHEN EXISTS (SELECT 1 FROM outbox o WHERE o.document_id = documents.id) ` +
+    `THEN documents.${column} ELSE excluded.${column} END`
+  );
+}
+
 export async function applyRemote(snapshot: RemoteSnapshot): Promise<void> {
   const db = await database();
 
@@ -531,18 +651,6 @@ export async function applyRemote(snapshot: RemoteSnapshot): Promise<void> {
       );
     }
 
-    for (const tag of snapshot.tags) {
-      if (tag.deleted) {
-        await db.runAsync('DELETE FROM tags WHERE id = ?', [tag.id]);
-        continue;
-      }
-      await db.runAsync('INSERT OR REPLACE INTO tags (id, name, color) VALUES (?, ?, ?)', [
-        tag.id,
-        tag.name,
-        tag.color,
-      ]);
-    }
-
     for (const document of snapshot.documents) {
       const rows =
         document.folderRemoteId === null
@@ -556,20 +664,28 @@ export async function applyRemote(snapshot: RemoteSnapshot): Promise<void> {
         `INSERT INTO documents
            (id, title, doc_type, folder_name, favorite, cached, size_bytes, updated_at,
             imported_at, open_count, last_opened_at, note, keep_offline, trashed_at,
-            source, cache_key, storage_path, content_hash)
-         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+            source, cache_key, storage_path, content_hash, read_at, archived_at)
+         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
-           title = excluded.title,
+           -- Die Nutzerfelder nur, solange kein Eintrag in der Outbox offen
+           -- ist: sonst naehme der Abruf zurueck, was gerade offline gewischt
+           -- wurde, und der naechste Push schriebe den alten Wert wieder hoch.
+           title = ${mine('title')},
+           folder_name = ${mine('folder_name')},
+           favorite = ${mine('favorite')},
+           note = ${mine('note')},
+           keep_offline = ${mine('keep_offline')},
+           trashed_at = ${mine('trashed_at')},
+           open_count = ${mine('open_count')},
+           last_opened_at = ${mine('last_opened_at')},
+           read_at = ${mine('read_at')},
+           archived_at = ${mine('archived_at')},
+           -- Technische Felder kommen immer vom Server: sie beschreiben die
+           -- Datei oben, nicht die Ablage hier. Bliebe der Dateicache auf
+           -- einem veralteten Hash stehen, holte der Viewer nie neu.
            doc_type = excluded.doc_type,
-           folder_name = excluded.folder_name,
-           favorite = excluded.favorite,
            size_bytes = excluded.size_bytes,
            updated_at = excluded.updated_at,
-           open_count = excluded.open_count,
-           last_opened_at = excluded.last_opened_at,
-           note = excluded.note,
-           keep_offline = excluded.keep_offline,
-           trashed_at = excluded.trashed_at,
            source = excluded.source,
            storage_path = excluded.storage_path,
            content_hash = excluded.content_hash,
@@ -598,22 +714,10 @@ export async function applyRemote(snapshot: RemoteSnapshot): Promise<void> {
           document.source,
           document.storagePath,
           document.contentHash,
+          document.readAt,
+          document.archivedAt,
         ]
       );
-    }
-
-    for (const pair of snapshot.documentTags) {
-      if (pair.deleted) {
-        await db.runAsync('DELETE FROM document_tags WHERE document_id = ? AND tag_id = ?', [
-          pair.documentId,
-          pair.tagId,
-        ]);
-        continue;
-      }
-      await db.runAsync('INSERT OR IGNORE INTO document_tags (document_id, tag_id) VALUES (?, ?)', [
-        pair.documentId,
-        pair.tagId,
-      ]);
     }
   });
 }

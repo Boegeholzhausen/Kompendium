@@ -77,29 +77,23 @@ alter table public.documents add column if not exists source_path text;
 create unique index if not exists documents_source_path_idx
   on public.documents(owner_id, source_path) where source_path is not null;
 
--- ── Tags ──────────────────────────────────────────────────────────────────
-create table if not exists public.tags (
-  id         uuid primary key default gen_random_uuid(),
-  owner_id   uuid not null default auth.uid(),
-  name       text not null,
-  color      text not null default 'mint',   -- Name aus der Tag-Palette
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  deleted_at timestamptz,
-  unique (owner_id, name)
-);
+-- ── Workflow-Status ───────────────────────────────────────────────────────
+-- Zwei Spalten statt einer Status-Spalte mit drei Werten: Archiv ist eine
+-- zweite Achse neben gelesen/ungelesen. Ein archiviertes Dokument ist in aller
+-- Regel auch gelesen, und mit nur einer Spalte ginge beim Entarchivieren die
+-- Leseinformation verloren. `null` heisst ungelesen bzw. nicht archiviert.
+alter table public.documents add column if not exists read_at     timestamptz;
+alter table public.documents add column if not exists archived_at timestamptz;
 
-create table if not exists public.document_tags (
-  document_id uuid references public.documents(id) on delete cascade,
-  tag_id      uuid references public.tags(id) on delete cascade,
-  owner_id    uuid not null default auth.uid(),
-  updated_at  timestamptz not null default now(),
-  deleted_at  timestamptz,
-  primary key (document_id, tag_id)
-);
+-- Frueher standen hier `tags` und `document_tags`. Beide sind mit dem
+-- Workflow-Status entfallen: "gelesen" ist ein einwertiger Lebenszyklus und
+-- keine mehrwertige Klassifikation — ueber eine Zuordnungstabelle abgebildet
+-- erlaubte die Datenbank Zustaende, die es fachlich nicht gibt.
+drop table if exists public.document_tags;
+drop table if exists public.tags;
 
-create index if not exists tags_updated_idx          on public.tags(owner_id, updated_at);
-create index if not exists document_tags_updated_idx on public.document_tags(owner_id, updated_at);
+-- Kein Index auf den Status: gefiltert wird in der App ueber den Bestand im
+-- Zustand, nicht in einer Abfrage.
 
 -- ── updated_at automatisch fortschreiben ──────────────────────────────────
 -- Das Pull-Wasserzeichen der App verlaesst sich darauf. Soft Delete setzt
@@ -116,7 +110,7 @@ $$;
 do $$
 declare t text;
 begin
-  foreach t in array array['folders','documents','tags','document_tags'] loop
+  foreach t in array array['folders','documents'] loop
     execute format('drop trigger if exists %I_touch on public.%I', t, t);
     execute format(
       'create trigger %I_touch before update on public.%I
@@ -129,7 +123,7 @@ end $$;
 do $$
 declare t text;
 begin
-  foreach t in array array['folders','documents','tags','document_tags'] loop
+  foreach t in array array['folders','documents'] loop
     execute format('alter table public.%I enable row level security', t);
     execute format('drop policy if exists %I_owner on public.%I', t, t);
     execute format(

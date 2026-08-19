@@ -171,7 +171,7 @@ export function BottomSheet({ visible, height, onClose, style, ...rest }: Bottom
 /**
  * Dieselbe Huelle, aber als Ebene **innerhalb** eines Screens statt als Modal.
  *
- * Der Viewer braucht das: "Das Tag-Sheet legt sich ueber das Info-Sheet,
+ * Der Viewer braucht das: "Das Suchen-Sheet legt sich ueber das Info-Sheet,
  * ersetzt es nicht." Zwei gestapelte Modals lassen ihre Reihenfolge nicht
  * zuverlaessig steuern, und der Toast muesste ueber beiden liegen — ueber
  * Modal-Grenzen hinweg geht das nicht. Als absolute Ebenen im selben Screen

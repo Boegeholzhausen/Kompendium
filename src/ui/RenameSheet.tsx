@@ -1,7 +1,7 @@
 /**
  * Screen 18 · Sheet "Umbenennen" (Blatt `6d`).
  *
- * Es steht hier in `ui/` und nicht bei den Tags, weil das Handoff-Dokument es
+ * Es steht hier in `ui/` und nicht bei den Ordnern, weil das Handoff-Dokument es
  * ausdruecklich doppelt verwendet: "identisch fuer „Ordner bearbeiten"". Ein
  * zweites, fast gleiches Sheet waere die schlechtere Loesung.
  *
@@ -30,15 +30,15 @@ import { Text } from './Text';
 
 export interface RenameSheetProps {
   visible: boolean;
-  /** "Tag umbenennen" oder "Ordner umbenennen". */
+  /** Etwa "Ordner umbenennen". */
   title: string;
   /** Bisheriger Name — steht in der Kontextzeile und als Ausgangswert im Feld. */
   currentName: string;
-  /** Farbpunkt der Kontextzeile: Tag- oder Ordnerfarbe. */
+  /** Farbpunkt der Kontextzeile: die Ordnerfarbe. */
   color: string;
   /** Zahl der betroffenen Dokumente. */
   count: number;
-  /** Ganzer Satz der Hinweiszeile, etwa "Wirkt auf alle 12 Dokumente mit diesem Tag". */
+  /** Ganzer Satz der Hinweiszeile, etwa "Wirkt auf alle 12 Dokumente im Ordner". */
   hint: string;
   onSubmit: (name: string) => void;
   onClose: () => void;

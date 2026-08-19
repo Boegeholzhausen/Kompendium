@@ -12,7 +12,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { accent, border, radius, size, space, tagPalette } from '../theme';
 import {
-  AddTagChip,
   ContextMenuSurface,
   CreateFolderTile,
   DocCard,
@@ -31,20 +30,20 @@ import {
   SkeletonList,
   SyncIndicator,
   TabBar,
-  TagChip,
   Text,
   TextButton,
   ToastSurface,
 } from '../ui';
 import {
+  Archive,
   Books,
   Check,
+  CheckCircle,
   Folder,
   FolderOpen,
   Folders,
   Gear,
   Star,
-  Tag,
   Trash,
 } from '../ui/icons';
 
@@ -102,7 +101,7 @@ export function ComponentSheet() {
           title="Portfolio-Analyse Q3"
           type="chart"
           meta="vor 3 Tagen · 240 KB"
-          tagColors={[tagPalette.sky, tagPalette.amber]}
+          unread
           favorite
         />
         <Caption>Zweizeiliger Titel</Caption>
@@ -165,15 +164,6 @@ export function ComponentSheet() {
           <FolderTile name="Recht" count={12} color={tagPalette.violet} style={styles.folderCell} />
         </View>
         <CreateFolderTile style={styles.createFolder} />
-      </Block>
-
-      <Block title="04 · Tag-Chip" note="Ruhe · entfernbar · deaktiviert · Zuweisen">
-        <View style={styles.chipRow}>
-          <TagChip label="Finanzen" color={tagPalette.sky} />
-          <TagChip label="Finanzen" color={tagPalette.sky} removable />
-          <TagChip label="Archiv" color={tagPalette.slate} disabled />
-          <AddTagChip />
-        </View>
       </Block>
 
       <Block title="05 · Filter-Chip">
@@ -254,7 +244,7 @@ export function ComponentSheet() {
           items={[
             { key: 'fav', label: 'Zu Favoriten', icon: Star },
             { key: 'move', label: 'Verschieben', icon: FolderOpen },
-            { key: 'tags', label: 'Tags bearbeiten', icon: Tag },
+            { key: 'read', label: 'Als gelesen markieren', icon: CheckCircle },
             { key: 'trash', label: 'In den Papierkorb', icon: Trash, destructive: true },
           ]}
         />
@@ -285,7 +275,6 @@ export function ComponentSheet() {
             items={[
               { key: 'library', label: 'Bibliothek', icon: Books },
               { key: 'folders', label: 'Ordner', icon: Folders },
-              { key: 'tags', label: 'Tags', icon: Tag },
               { key: 'settings', label: 'Einstellungen', icon: Gear },
             ]}
           />
@@ -296,8 +285,8 @@ export function ComponentSheet() {
             inline
             actions={[
               { key: 'move', label: 'Verschieben', icon: FolderOpen },
-              { key: 'tag', label: 'Taggen', icon: Tag },
-              { key: 'fav', label: 'Favorit', icon: Star },
+              { key: 'read', label: 'Gelesen', icon: CheckCircle },
+              { key: 'archive', label: 'Archiv', icon: Archive },
               { key: 'delete', label: 'Loeschen', icon: Trash, destructive: true },
             ]}
           />

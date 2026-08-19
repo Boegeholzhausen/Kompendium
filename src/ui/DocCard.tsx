@@ -8,6 +8,11 @@
  * Der Favoriten-Stern liegt oben rechts AUF der Kachel: unter dem Titel bleibt
  * kein 48-dp-Ziel frei, ohne die Karte in die Hoehe zu ziehen.
  *
+ * Das Status-Icon steht rechts in der untersten Zeile, neben Ordner-Chip oder
+ * Metazeile — dieselbe Anzeige wie in der Dokumentzeile, damit beide Ansichten
+ * denselben Zustand zeigen. In der Kachel gibt es keine Wischgeste; gesetzt
+ * wird der Status hier ueber Kontextmenue und Auswahlmodus.
+ *
  * Ergaenzt in Schritt 4 fuer die Sektion "Neu" (Blatt 1c): dort tragen die
  * Karten statt des Ordner-Chips die Metazeile — jede dieser Karten ist per
  * Definition nicht einsortiert, ein dreimal wiederholtes "Nicht einsortiert"
@@ -17,10 +22,10 @@
 import React from 'react';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 
-import { accent, bg, border, radius, size, space, text as textColor } from '../theme';
+import { accent, bg, border, iconSize, radius, size, space, text as textColor } from '../theme';
 import type { DocType, TileState } from '../theme/tile';
 import { DocTile } from './DocTile';
-import { CloudSlash, Folder, Star, Tray } from './icons';
+import { CheckCircle, Circle, CloudSlash, Folder, Star, Tray } from './icons';
 import { PressableScale } from './press';
 import { Text } from './Text';
 
@@ -35,6 +40,8 @@ export interface DocCardProps {
   favorite?: boolean;
   /** Sektion "Neu": ohne Stern. */
   showFavorite?: boolean;
+  /** Workflow-Status; nur Anzeige, kein Beruehrungsziel (wie in `DocRow`). */
+  unread?: boolean;
   /**
    * Offline nicht geladen. Die entsaettigte Kachel allein reicht nicht —
    * Farbe traegt nie allein die Bedeutung, also sagt es der Chip zusaetzlich.
@@ -55,6 +62,7 @@ export function DocCard({
   meta,
   favorite = false,
   showFavorite = true,
+  unread,
   unavailable = false,
   state = 'default',
   onPress,
@@ -68,7 +76,9 @@ export function DocCard({
         onPress={onPress}
         onLongPress={onLongPress}
         accessibilityRole="button"
-        accessibilityLabel={`${title}. ${meta ?? folderName ?? 'Nicht einsortiert'}`}
+        accessibilityLabel={`${title}. ${meta ?? folderName ?? 'Nicht einsortiert'}.${
+          unread === undefined ? '' : unread ? ' Ungelesen.' : ' Gelesen.'
+        }`}
       >
         {({ pressed }) => (
           <>
@@ -90,33 +100,51 @@ export function DocCard({
             >
               {title}
             </Text>
-            {unavailable ? (
-              <View style={styles.chipRow}>
-                <View style={styles.chip}>
-                  <CloudSlash size={14} color={textColor.tertiary} weight="regular" />
-                  <Text variant="caption" tone="tertiary" numberOfLines={1}>
-                    nicht geladen
+            <View style={styles.bottomRow}>
+              <View style={styles.bottomMain}>
+                {unavailable ? (
+                  <View style={styles.chipRow}>
+                    <View style={styles.chip}>
+                      <CloudSlash size={14} color={textColor.tertiary} weight="regular" />
+                      <Text variant="caption" tone="tertiary" numberOfLines={1}>
+                        nicht geladen
+                      </Text>
+                    </View>
+                  </View>
+                ) : meta !== undefined ? (
+                  <Text
+                    variant="caption"
+                    tone="secondary"
+                    numeric
+                    numberOfLines={1}
+                    style={styles.meta}
+                  >
+                    {meta}
                   </Text>
-                </View>
+                ) : (
+                  <View style={styles.chipRow}>
+                    <View style={styles.chip}>
+                      {folderName ? (
+                        <Folder size={14} color={textColor.secondary} weight="regular" />
+                      ) : (
+                        <Tray size={14} color={textColor.secondary} weight="regular" />
+                      )}
+                      <Text variant="caption" tone="secondary" numberOfLines={1}>
+                        {folderName ?? 'Nicht einsortiert'}
+                      </Text>
+                    </View>
+                  </View>
+                )}
               </View>
-            ) : meta !== undefined ? (
-              <Text variant="caption" tone="secondary" numeric numberOfLines={1} style={styles.meta}>
-                {meta}
-              </Text>
-            ) : (
-              <View style={styles.chipRow}>
-                <View style={styles.chip}>
-                  {folderName ? (
-                    <Folder size={14} color={textColor.secondary} weight="regular" />
-                  ) : (
-                    <Tray size={14} color={textColor.secondary} weight="regular" />
-                  )}
-                  <Text variant="caption" tone="secondary" numberOfLines={1}>
-                    {folderName ?? 'Nicht einsortiert'}
-                  </Text>
-                </View>
-              </View>
-            )}
+
+              {unread !== undefined ? (
+                unread ? (
+                  <Circle size={iconSize.sm} color={accent.base} weight="fill" />
+                ) : (
+                  <CheckCircle size={iconSize.sm} color={textColor.tertiary} weight="regular" />
+                )
+              ) : null}
+            </View>
           </>
         )}
       </PressableScale>
@@ -149,6 +177,16 @@ const styles = StyleSheet.create({
   title: {
     marginTop: space['8'],
     height: size.cardTitleHeight,
+  },
+  bottomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space['8'],
+  },
+  /** Nimmt den Platz, den das Status-Icon uebrig laesst — der Chip kuerzt dann. */
+  bottomMain: {
+    flex: 1,
+    minWidth: 0,
   },
   chipRow: {
     flexDirection: 'row',
