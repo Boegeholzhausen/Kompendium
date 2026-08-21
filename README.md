@@ -593,6 +593,60 @@ Beschriftungen im Aktionsbalken, ergänztes "Dokumente abdunkeln", ergänztes
 "Für offline vormerken"): siehe die jeweilige Screen-Beschreibung in
 [DESIGN.md](DESIGN.md).
 
+## Store-Build
+
+Die tägliche Entwicklung bleibt unverändert `npx expo start` mit Expo Go
+(siehe "Start"). Alles in diesem Abschnitt betrifft nur den Weg in die
+Play Console.
+
+Seit `android/` nicht mehr im Repo liegt (siehe "Abweichungen"), ist
+[app.json](app.json) die einzige Quelle für alles Native. Was dort steht und
+warum:
+
+- **`android.versionCode: 1`** — die Zahl, an der die Play Console zwei
+  Uploads unterscheidet; sie muss mit jedem Upload steigen und darf nie
+  sinken. `version` ("1.0.0") ist davon unabhängig und nur der Text, den
+  Nutzer im Store sehen. Ab dem ersten Build zählt EAS den `versionCode`
+  selbst hoch (`autoIncrement`, siehe unten), die 1 ist nur der Startwert.
+- **`android.blockedPermissions`** — drei Berechtigungen, die Module ins
+  Manifest schreiben, die die App aber nicht braucht. Jede davon müsste sonst
+  im Store-Eintrag begründet werden:
+  - `SYSTEM_ALERT_WINDOW` ("über anderen Apps anzeigen") stammt aus dem
+    Debug-Manifest von React Native und trägt dort das schwebende
+    Entwicklermenü. Im Release ist es funktionslos. Der Block wirkt technisch
+    auch auf lokale Debug-Builds — das ist folgenlos, weil das Entwicklermenü
+    in Expo Go ohnehin von Expo Go kommt.
+  - `READ_EXTERNAL_STORAGE` und `WRITE_EXTERNAL_STORAGE` (bis Android 12)
+    kommen aus `expo-file-system`. Die App braucht beide nicht: geschrieben
+    wird ausschließlich nach `Paths.document`, also in den app-eigenen
+    Bereich (siehe "Import und Dateicache"), und der Datei-Picker läuft über
+    `copyToCacheDirectory`, wobei Android die gewählte Datei selbst in den
+    App-Cache kopiert. Der Import-Weg bleibt damit vollständig: Datei-Picker,
+    Zwischenablage und URL funktionieren unverändert, ebenso Teilen und
+    Drucken.
+
+  Kontrolliert wird das an der Ausgabe von `npx expo prebuild -p android`:
+  im erzeugten `android/app/src/main/AndroidManifest.xml` tragen die drei
+  Einträge `tools:node="remove"` und fallen beim Zusammenführen heraus.
+  Wirksam bleiben nur `INTERNET` (Supabase) und `VIBRATE`
+  (`expo-haptics`).
+
+Nicht angefasst, weil das erzeugte Manifest schon das gewünschte Verhalten
+zeigt: `windowSoftInputMode="adjustResize"` und
+`screenOrientation="portrait"`.
+
+**Keine OTA-Updates.** `expo-updates` ist nicht installiert und wird auch
+nicht eingeführt; das Manifest trägt `expo.modules.updates.ENABLED=false`.
+Jede Änderung geht damit über einen neuen Build.
+
+### App-Icon
+
+Steht noch aus und ist bewusst noch nicht in app.json eingetragen — ein Pfad
+auf eine fehlende Datei bricht `prebuild` und damit jeden Build ab. Welche
+zwei Dateien nach `assets/` gehören und welche Einträge danach in app.json
+ergänzt werden, steht in [assets/README.md](assets/README.md). Bis dahin
+baut die App mit dem Standard-Expo-Icon, was für den internen Test genügt.
+
 ## Noch offen
 
 - Abgleich beim Wechsel in den Vordergrund und Pull-to-Refresh. Zurzeit

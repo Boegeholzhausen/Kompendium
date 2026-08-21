@@ -8,7 +8,13 @@
     "userInterfaceStyle": "dark",
     "backgroundColor": "#0E1012",
     "android": {
-      "package": "de.boege.kompendium"
+      "package": "de.boege.kompendium",
+      "versionCode": 1,
+      "blockedPermissions": [
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
+      ]
     },
     "ios": {
       "supportsTablet": false,
