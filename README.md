@@ -253,6 +253,24 @@ beim Laden nichts weiß aufblitzt.
 
 ## Abweichungen vom Handoff-Dokument — Projektentscheidungen
 
+- **Kein eingecheckter `android/`-Ordner (Continuous Native Generation).** Der
+  Ordner lag bis zuletzt im Repo, enthielt aber keine einzige handgemachte
+  Zeile: ein `npx expo prebuild -p android --clean` erzeugt ihn Datei für
+  Datei identisch. Damit war er nur eine zweite Wahrheit neben
+  [app.json](app.json) — und die gefährlichere von beiden, denn ein
+  vorhandener `android/`-Ordner gewinnt gegen app.json. Icon, Berechtigungen
+  und Versionsnummer, die dort eingetragen werden, blieben wirkungslos.
+  Seit jetzt gilt: `android/` ist ignoriert, app.json ist die einzige Quelle,
+  und der native Ordner entsteht bei jedem Build neu. Die alte Kopie liegt
+  unter `_to_delete/` (ebenfalls ignoriert) und kann weg, sobald der erste
+  EAS-Build durch ist.
+- **Store-Build über EAS Build.** Das signierte AAB für den internen Test der
+  Play Console entsteht in der Cloud (`eas build`), nicht auf diesem PC — ein
+  lokales Android SDK ist dafür nicht nötig. Für die tägliche Entwicklung
+  bleibt es unverändert bei `npx expo start` und Expo Go; der Dev-Build ist
+  ausschließlich der Weg in den Store. Ablauf und Profile: Abschnitt
+  "Store-Build".
+
 - **Speicherbalken:** Der Balken aus Blatt `3i` samt Kontingent von 3 GB ist
   entfallen. Das Kontingent war kein Gerätewert und wurde von nichts
   durchgesetzt — kein Import blockiert, nichts verdrängt; ein Balken, dessen
