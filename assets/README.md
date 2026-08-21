@@ -1,41 +1,20 @@
 # assets/
 
-Hier liegen die Bilddateien, die in [app.json](../app.json) eingetragen werden.
-Der Ordner ist absichtlich noch leer: **die Einträge in app.json werden erst
-gesetzt, wenn die Dateien wirklich hier liegen** — ein Pfad auf eine fehlende
-Datei lässt `expo prebuild` und damit jeden EAS-Build abbrechen.
+Die Bilddateien, auf die [app.json](../app.json) zeigt.
 
-## Was nachgeliefert wird
-
-| Datei | Größe | Was es ist |
+| Datei | Größe | Wofür |
 | --- | --- | --- |
-| `icon.png` | 1024x1024 | Das App-Icon als Ganzes. Quadratisch, ohne eigene runde Maske — Android schneidet selbst zu. |
-| `adaptive-icon.png` | 1024x1024 | Nur der **Vordergrund** des adaptiven Icons, mit durchsichtigem Hintergrund. Android bewegt diese Ebene beim Wackeln über dem Hintergrund, deshalb gehört das Motiv in die mittleren ~66 % der Fläche; alles weiter außen kann je nach Launcher-Maske abgeschnitten werden. |
+| `icon.png` | 1024x1024 | Das klassische App-Icon, deckend. Trägt `expo.icon`. |
+| `adaptive-icon.png` | 1024x1024 | Nur der **Vordergrund** des adaptiven Icons, transparent, Motiv im inneren Kreis (66 %). Trägt `expo.android.adaptiveIcon.foregroundImage`. |
+| `play-store-512.png` | 512x512 | **Nicht Teil des Builds.** Das Bild für den Store-Eintrag, wird in der Play Console hochgeladen. |
+| `README.txt` | — | Herkunft des Entwurfs (Variante 02) und seine Farbwerte, so wie geliefert. |
 
-## Was dann in app.json ergänzt wird
+Der Hintergrund des adaptiven Icons ist kein Bild, sondern die Farbe
+`android.adaptiveIcon.backgroundColor` in app.json: `#0E1012`, also `color.bg`
+aus [../src/theme](../src/theme/) — bewusst nicht der `#15181B` aus
+`README.txt`, damit Icon- und App-Hintergrund übereinstimmen.
 
-Unter `expo`:
-
-```json
-"icon": "./assets/icon.png"
-```
-
-Unter `expo.android`:
-
-```json
-"adaptiveIcon": {
-  "foregroundImage": "./assets/adaptive-icon.png",
-  "backgroundColor": "#0E1012"
-}
-```
-
-`backgroundColor` ist die Hintergrundebene des adaptiven Icons. `#0E1012` ist
-derselbe Wert, der in app.json schon als `backgroundColor` steht — das ist
-`color.bg` aus [src/theme](../src/theme/), damit Icon-Hintergrund und
-App-Hintergrund dieselbe Farbe sind. Es ist der einzige Ort außerhalb von
-`src/theme/`, an dem ein Hex-Code stehen darf: app.json ist keine Komponente
-und kann die Token-Datei nicht importieren.
-
-Danach einmal `npx expo prebuild -p android --clean` laufen lassen und
-kontrollieren, dass unter `android/app/src/main/res/mipmap-*/` neue Dateien
-liegen — dann zieht das Icon auch in den Build.
+Nach einer Änderung an den beiden PNGs einmal
+`npx expo prebuild -p android --clean` laufen lassen und kontrollieren, dass
+`android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml` sowie die
+`ic_launcher_foreground`-Dateien je Dichte neu entstanden sind.

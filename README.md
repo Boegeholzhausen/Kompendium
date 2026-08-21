@@ -641,11 +641,26 @@ Jede Änderung geht damit über einen neuen Build.
 
 ### App-Icon
 
-Steht noch aus und ist bewusst noch nicht in app.json eingetragen — ein Pfad
-auf eine fehlende Datei bricht `prebuild` und damit jeden Build ab. Welche
-zwei Dateien nach `assets/` gehören und welche Einträge danach in app.json
-ergänzt werden, steht in [assets/README.md](assets/README.md). Bis dahin
-baut die App mit dem Standard-Expo-Icon, was für den internen Test genügt.
+Eigener Entwurf (Variante 02, "Aufgeschlagenes Blatt mit Lesezeichen"),
+separat gezeichnet und als `assets/icon.png` und `assets/adaptive-icon.png`
+abgelegt (je 1024x1024, Vordergrund transparent); Herkunft und Farbwerte des
+Entwurfs stehen in [assets/README.txt](assets/README.txt).
+
+In app.json eingetragen sind `icon`, `android.adaptiveIcon.foregroundImage`
+und `android.adaptiveIcon.backgroundColor`. Als Hintergrund steht dort
+`#0E1012` — nicht der `#15181B` des Entwurfs, sondern `color.bg` aus
+[src/theme](src/theme/), damit Icon-Hintergrund und App-Hintergrund dieselbe
+Farbe haben. Das ist der einzige Hex-Code außerhalb von `src/theme/`:
+app.json ist keine Komponente und kann die Token-Datei nicht importieren.
+
+Kontrolliert am erzeugten Ordner: `prebuild` legt
+`res/mipmap-anydpi-v26/ic_launcher.xml` an (das `<adaptive-icon>` mit
+`@color/iconBackground`), schreibt `iconBackground` nach `values/colors.xml`
+und rechnet je Dichte die Bilder aus — Legacy-Icon 48 bis 192 px, adaptiver
+Vordergrund 108 bis 432 px.
+
+`assets/play-store-512.png` gehört nicht in den Build; es ist das
+512x512-Bild für den Store-Eintrag und wird in der Play Console hochgeladen.
 
 ## Noch offen
 
