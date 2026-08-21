@@ -49,7 +49,7 @@ import {
   type DocumentPatch,
   type OutboxEntry,
 } from '../db/repository';
-import { ensureSession, STORAGE_BUCKET, supabase } from '../supabase';
+import { currentUserId, STORAGE_BUCKET, supabase } from '../supabase';
 import { readDocument } from '../cache';
 import { previewText } from '../detect';
 import { tagPalette } from '../../theme/colors';
@@ -415,7 +415,7 @@ function parseSnapshot(raw: string | null): Record<string, string> {
 export async function pushChanges(): Promise<PushResult> {
   if (supabase === null) throw new Error('Supabase ist nicht eingerichtet.');
 
-  const userId = await ensureSession();
+  const userId = await currentUserId();
   if (userId === null) throw new Error('Keine Anmeldung bei Supabase.');
 
   // Solange der einmalige Schnitt nicht gefallen ist, steht hier der

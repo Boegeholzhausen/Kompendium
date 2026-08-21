@@ -16,10 +16,15 @@
  * `pending` bedeutet seitdem, was das Wort sagt: die Outbox ist nicht leer.
  * Vorher war es eine Vermutung nach jeder Aenderung am Handy — jetzt ist es
  * eine Auskunft (`countOutbox`).
+ *
+ * `signed-out` ist der fuenfte Zustand und ausdruecklich KEIN Fehler: ohne
+ * Anmeldung gibt es nichts abzugleichen, aber die Bibliothek funktioniert
+ * vollstaendig aus der lokalen Datenbank. Der Weg heraus steht in den
+ * Einstellungen unter "Konto".
  */
 import { create } from 'zustand';
 
-import { isSupabaseConfigured } from '../data/supabase';
+import { currentUserId, isSupabaseConfigured } from '../data/supabase';
 import { pullChanges } from '../data/remote/pull';
 import { pushChanges } from '../data/remote/push';
 import { countOutbox } from '../data/db/repository';
@@ -53,6 +58,15 @@ export const useSyncStore = create<SyncState>((set, get) => ({
     // etwas, das gar nicht versucht wurde.
     if (!isSupabaseConfigured) {
       set({ status: 'idle', lastError: null });
+      return;
+    }
+
+    // Niemand angemeldet: nichts abzugleichen, aber auch nichts kaputt. Die
+    // Bibliothek laeuft vollstaendig aus der lokalen Datenbank; `error` waere
+    // eine Falschaussage ueber einen Zustand, den der Nutzer gewaehlt hat.
+    // Gesagt wird es dort, wo man etwas tun kann — Einstellungen, "Konto".
+    if ((await currentUserId()) === null) {
+      set({ status: 'signed-out', lastError: null });
       return;
     }
 
@@ -104,5 +118,6 @@ export const syncLabels: Record<SyncStatus, string> = {
   idle: 'Synchron',
   syncing: 'Wird synchronisiert',
   pending: 'Änderungen offen',
+  'signed-out': 'Nicht angemeldet',
   error: 'Sync fehlgeschlagen',
 };

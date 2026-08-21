@@ -38,14 +38,17 @@ export default function RootLayout() {
 
   useEffect(() => subscribeNetwork(), []);
 
-  // Anmeldung und Abgleich laufen nebenher: kein Screen wartet auf sie, weil
-  // kein Screen sie braucht — die Bibliothek rendert aus der lokalen Datenbank
-  // und tauscht die Zeilen aus, wenn neue da sind. Die Reihenfolge ist
-  // trotzdem fest: ohne Identitaet gibt es keine Zeile, die dem Geraet
-  // gehoert, und damit nichts abzugleichen.
+  // Session nachsehen und abgleichen laufen nebenher: kein Screen wartet auf
+  // sie, weil kein Screen sie braucht — die Bibliothek rendert aus der lokalen
+  // Datenbank und tauscht die Zeilen aus, wenn neue da sind. Die Reihenfolge
+  // ist trotzdem fest: ohne Anmeldung gibt es nichts abzugleichen, und `sync`
+  // soll das als "Nicht angemeldet" melden und nicht als Fehler.
+  //
+  // `restore` legt nie eine Identitaet an. Ist keine Session da, bleibt es
+  // dabei, bis sich der Nutzer in den Einstellungen anmeldet.
   useEffect(() => {
     void (async () => {
-      await useSessionStore.getState().signIn();
+      await useSessionStore.getState().restore();
       await useSyncStore.getState().sync();
     })();
   }, []);

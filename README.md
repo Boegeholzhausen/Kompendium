@@ -68,12 +68,14 @@ Bibliothek/Ordner/Einstellungen (siehe "Abweichungen").
    fehlende Spalten (zuletzt `folders.keep_offline`, `documents.scroll_offset`
    und die Tabelle `user_settings`).
 3. Unter *Authentication > Sign In / Providers* **Anonymous sign-ins**
-   aktivieren — die App meldet sich ohne Login-Screen an.
-4. Am selben Ort **Email** aktivieren und in den Mail-Vorlagen `{{ .Token }}`
-   ergänzen. Erst damit lässt sich die Geräte-Identität unter
-   *Einstellungen > Konto* mit einer E-Mail verknüpfen — und nur dann sieht ein
-   zweites Gerät denselben Bestand. Schritt für Schritt:
-   [supabase/SETUP.md](supabase/SETUP.md).
+   aktivieren. Nur für den Anfang: bei einem frischen Projekt legt die App
+   damit die erste Identität an, die im nächsten Schritt zum Konto wird.
+4. Am selben Ort **Email** aktivieren, dann einmal
+   `npm run konto -- "meine@adresse.de" "ein-langes-passwort"`. Das Skript
+   macht aus der vorhandenen anonymen Identität ein Konto — **ohne** dass die
+   Kennung wechselt. Danach in der App unter *Einstellungen → Konto →
+   Anmelden* einmal eintippen; auf jedem weiteren Gerät genauso. Schritt für
+   Schritt: [supabase/SETUP.md](supabase/SETUP.md).
 
 Ohne `.env` startet die App trotzdem und läuft rein lokal — dann bleibt der
 Beispiel-Bestand aus `src/data/sampleLibrary.ts` die Bibliothek. **Mit** `.env`
@@ -99,9 +101,9 @@ erkannt würden. Ein zweiter Lauf über denselben Ordner lädt nichts erneut hoc
 **Reihenfolge beim ersten Mal:** erst die App einmal auf dem Handy starten —
 sie meldet sich anonym an und legt damit die Identität an, unter der die
 Dokumente liegen. Ohne sie hat das Skript keine `owner_id` und sagt das auch.
-Die Kennung steht in der App unter *Einstellungen > Konto > Gerätekennung*
-(Antippen kopiert sie). Sie ändert sich beim Verknüpfen mit einer E-Mail
-**nicht** — eine einmal eingetragene `KOMPENDIUM_OWNER_ID` bleibt gültig.
+Die Kennung steht in der App unter *Einstellungen > Konto > Kennung* (Antippen
+kopiert sie). `npm run konto` ändert sie **nicht** — eine einmal eingetragene
+`KOMPENDIUM_OWNER_ID` bleibt gültig.
 
 Der Service-Role-Key in `.env.local` umgeht RLS vollständig. Er gehört auf den
 Rechner und niemals in die App — warum das Skript ihn trotzdem braucht, steht
@@ -482,12 +484,27 @@ beim Laden nichts weiß aufblitzt.
   dabei unverändert: die Datei im Cache wird nicht umbenannt.
 - **Der Beispiel-Bestand wird nie hochgeladen.** Die CHECK-Bedingung oben kennt
   `source = 'sample'` nicht, und er ist Erstbefüllung und kein Bestand.
-- **Die Identität lässt sich mit einer E-Mail verknüpfen, wird dabei aber nie
-  ersetzt** (`updateUser`, nicht `signInWithOtp`). Ein Neuanmelden auf dem
-  Erstgerät ließe alle vorhandenen Zeilen verwaist zurück — `owner_id` zeigte
-  auf eine Identität, an die niemand mehr herankommt. Bestätigt wird über einen
-  sechsstelligen Code aus der Mail und nicht über einen Magic Link: der
-  bräuchte einen Deep-Link-Rückweg, den Expo Go nicht verlässlich bedient.
+- **Angemeldet wird in den Einstellungen, nicht vor der App.** Ein
+  Anmeldeschirm davor machte die Bibliothek ohne Netz unbenutzbar — die lokale
+  Datenbank ist die Wahrheitsquelle, und jeder Screen rendert offline
+  vollständig. „Nicht angemeldet" ist deshalb ein normaler Zustand und kein
+  Fehler: die Bibliothek läuft, der Abgleich ruht, und die Statuszeile sagt
+  das. Der Sync-Indikator bleibt dabei neutral wie bei `idle` — eine gelbe
+  Leiste über jedem Screen wäre ein Alarm für etwas, das der Nutzer gewählt
+  hat.
+- **Kein anonymer Rückfall mehr.** Er wäre neben einem Login eine Falle: wer
+  sich abmeldet und neu startet, bekäme still eine zweite Identität mit leerer
+  Bibliothek, und der nächste Abgleich schöbe seinen Bestand dorthin. Ohne
+  Anmeldung passiert schlicht nichts. Im App-Bundle stehen damit nur URL und
+  Anon Key, beide ohne Anmeldung wertlos; auf dem Gerät bleibt ein
+  Sitzungs-Token in AsyncStorage.
+- **Das Konto legt `npm run konto` an, nicht die App.** Für einen einzigen
+  Nutzer wäre eine Registrierung in der Oberfläche ein Weg, den man genau
+  einmal geht. Wichtiger: `auth.admin.updateUserById` setzt E-Mail und
+  Passwort an der **vorhandenen** Identität, die Kennung bleibt. Eine
+  Neuanmeldung erzeugte eine zweite Identität und ließe alle bisherigen Zeilen
+  verwaist zurück — `owner_id` zeigte auf eine Kennung, an die niemand mehr
+  herankommt.
 - **Wechselt die Identität, verliert der Abgleich seine Merkposten**
   (`noteOwner`): Wasserzeichen, Ordner-Ausweise und der Stand der
   Voreinstellungen zeigen dann auf ein fremdes Konto. Unter RLS scheitert ein

@@ -56,47 +56,44 @@ Das ist der eine Punkt, den man nicht überspringen sollte — ohne RLS wären a
 1. **Storage** öffnen.
 2. Es muss ein Bucket **`documents`** existieren, markiert als **Private** (nicht public). Falls er fehlt, hat der Storage-Teil des Skripts nicht funktioniert.
 
-### 1.6 Anonymous sign-ins aktivieren
+### 1.6 Anonymous sign-ins aktivieren (nur für den Anfang)
 
-Die App meldet Nutzer beim ersten Start still und ohne Registrierung an. Dafür braucht sie diese Einstellung — sonst schlägt jeder Login fehl und es fließen keine Daten.
+Bei einem **frischen** Projekt legt die erste Identität die App selbst an — beim ersten Start, still und ohne Registrierung. Genau diese Identität bekommt in Schritt 1.7 E-Mail und Passwort und wird damit zum Konto. Danach braucht die App das anonyme Anmelden nicht mehr, und der Schalter darf wieder aus.
+
+Hast du dieses Projekt schon einmal benutzt, existiert die Identität bereits — dann kannst du direkt zu 1.7 springen.
 
 1. **Authentication** → **Sign In / Providers** (in manchen Versionen: **Providers** bzw. **Settings**).
 2. Den Eintrag **Anonymous sign-ins** suchen und **einschalten**.
 3. **Save**.
 
-Zum Verständnis: Ein anonymer Nutzer bekommt eine echte, dauerhafte User-ID. Genau die landet als `owner_id` in deinen Zeilen, und genau darauf greift RLS zu. Kein Passwort, aber trotzdem sauber isolierte Daten. Genau dieser Account wird im nächsten Schritt mit einer E-Mail verknüpft — er wird dabei **nicht ersetzt**, und deshalb geht nichts verloren.
+Zum Verständnis: Ein anonymer Nutzer bekommt eine echte, dauerhafte User-ID. Genau die landet als `owner_id` in deinen Zeilen, und genau darauf greift RLS zu. Kein Passwort, aber trotzdem sauber isolierte Daten. Genau dieser Account bekommt im nächsten Schritt E-Mail und Passwort — er wird dabei **nicht ersetzt**, und deshalb geht nichts verloren. Danach braucht die App das anonyme Anmelden nicht mehr.
 
-### 1.7 E-Mail-Anmeldung aktivieren
+### 1.7 Ein Konto anlegen
 
-Solange die App nur anonym anmeldet, hat **jede Installation eine eigene** `auth.uid()`. RLS filtert auf `owner_id = auth.uid()` — ein zweites Gerät sieht deshalb einen leeren Bestand, egal wie gut der Abgleich funktioniert. Die E-Mail ist der Weg, aus der Geräte-Identität ein Konto zu machen, an dem sich ein zweites Gerät anmelden kann.
+Solange die App nur anonym anmeldet, hat **jede Installation eine eigene** `auth.uid()`. RLS filtert auf `owner_id = auth.uid()` — ein zweites Gerät sieht deshalb einen leeren Bestand, egal wie gut der Abgleich funktioniert. Mit einem richtigen Konto melden sich alle Geräte unter derselben Kennung an.
 
-1. **Authentication** → **Sign In / Providers**.
-2. **Email** einschalten und speichern.
-3. Bei **Confirm email** die Bestätigung **eingeschaltet lassen** — genau diese Mail trägt den Code.
-4. Unter **Authentication → Emails** (teils **Email Templates**) prüfen, dass die Vorlagen **Confirm signup**, **Magic Link** und **Change Email Address** den Platzhalter `{{ .Token }}` enthalten. Die Standardvorlagen von Supabase enthalten nur `{{ .ConfirmationURL }}`; ergänze eine Zeile, etwa:
+1. **Authentication → Sign In / Providers**: **Email** einschalten und speichern. (An den Mail-Vorlagen ist nichts zu tun — es wird keine Mail verschickt.)
+2. In PowerShell im Projektordner:
 
+   ```powershell
+   npm run konto -- "meine@adresse.de" "ein-langes-passwort" --dry
+   npm run konto -- "meine@adresse.de" "ein-langes-passwort"
    ```
-   <p>Dein Code: <strong>{{ .Token }}</strong></p>
-   ```
 
-   Warum der Code und nicht der Link: ein Link müsste über einen Deep-Link zurück in die App führen, und das bedient Expo Go nicht verlässlich. Der sechsstellige Code aus derselben Mail funktioniert überall — abtippen, fertig. (Steht so auch als Begründung in `src/data/supabase.ts`.)
+   Das Skript setzt E-Mail und Passwort an der **vorhandenen** Identität (`auth.admin.updateUserById`). Die Kennung bleibt dieselbe — das ist der springende Punkt: jede Zeile in Supabase gehört ihr, und `scripts/upload.mjs` hat unter genau dieser Kennung hochgeladen. Eine Neuanmeldung mit einer neuen Adresse erzeugte stattdessen eine **zweite** Identität und ließe den ganzen bisherigen Bestand verwaist zurück.
 
-### 1.8 Ablauf: Erstgerät verknüpfen → Zweitgerät anmelden
+   Es läuft mit dem Service-Role-Key aus `.env.local` — der trägt bewusst kein `EXPO_PUBLIC_` im Namen und landet deshalb nie im App-Bundle. Das Passwort wird von Supabase gehasht abgelegt; im Projekt bleibt davon nichts zurück.
+3. **Kontrolle:** Dashboard → **Authentication → Users**. Es muss **dieselbe** User-ID sein wie vorher, jetzt mit der Adresse und `is_anonymous = false`. Kam eine zweite Kennung hinzu, ist etwas schiefgelaufen — dann nicht weitermachen, sondern nachsehen.
 
-**Erstgerät** (das mit dem Bestand):
+### 1.8 In der App anmelden
 
-1. **Einstellungen → Konto**. Dort steht „Nicht verknüpft · nur auf diesem Gerät".
-2. **Gerät verknüpfen** antippen, E-Mail-Adresse eingeben, **Code anfordern**.
-3. Code aus der Mail eintippen, **Bestätigen**. Die Zeile zeigt danach die Adresse.
-4. Kontrolle im Dashboard unter **Authentication → Users**: es muss **dieselbe User-ID** sein wie vorher, jetzt mit `is_anonymous = false`. Käme dort eine zweite Kennung hinzu, wären die alten Zeilen verwaist — die App verknüpft deshalb bewusst über `updateUser` und meldet sich nicht neu an.
+**Einstellungen → Konto → Anmelden**, E-Mail und Passwort eintippen. Das war's — die Anmeldung bleibt bestehen, auch über Neustarts hinweg, und auf einem zweiten Gerät genügt derselbe Vorgang.
 
-**Zweitgerät** (oder nach „App-Daten löschen"):
+Die App liegt dabei nicht hinter einem Anmeldeschirm: die lokale Datenbank ist die Wahrheitsquelle, jeder Screen funktioniert offline vollständig. Nicht angemeldet heißt schlicht, dass der Abgleich ruht — die Statuszeile sagt „Nicht angemeldet", die Bibliothek läuft weiter.
 
-1. **Einstellungen → Konto → Mit E-Mail anmelden** (bzw. „Mit vorhandener E-Mail anmelden").
-2. Dieselbe Adresse, Code aus der Mail, **Bestätigen**.
-3. Die App gleicht danach von selbst ab: Ordner, Dokumente und der Gelesen-Status kommen an.
+Im App-Bundle steht damit nur URL und Anon Key. Beide sind ohne Anmeldung wertlos, weil RLS auf `auth.uid()` filtert; auf dem Gerät bleibt nur ein Sitzungs-Token in AsyncStorage.
 
-`KOMPENDIUM_OWNER_ID` in `.env.local` bleibt dabei unverändert — das Verknüpfen ändert die Kennung nicht.
+**Passwort vergessen?** `npm run konto` noch einmal mit einem neuen laufen lassen — die Kennung bleibt, es bewegt sich kein Dokument.
 
 ---
 
@@ -161,12 +158,11 @@ Das `-c` leert den Metro-Cache. Ohne das siehst du unter Umständen noch die alt
 | SQL-Fehler `relation … already exists` | Skript lief schon einmal (teilweise) | Wenn das Projekt neu ist: einfachster Weg ist ein frisches Supabase-Projekt |
 | SQL-Fehler bei `storage.…` | Storage-Policies brauchen teils erhöhte Rechte | Rest des Skripts läuft; Bucket notfalls per Hand unter **Storage → New bucket**, Name `documents`, Private, anlegen |
 | App startet, zeigt aber keine Daten | `.env` nicht geladen | `npx expo start -c`, Variablennamen gegen `.env.example` prüfen |
-| Fehler „Anonymous sign-ins are disabled" | Schritt 1.6 fehlt | Provider einschalten und speichern |
-| „E-Mail-Anmeldung ist im Supabase-Projekt nicht aktiviert." | Schritt 1.7 fehlt | Email-Provider einschalten und speichern |
-| Mail kommt an, enthält aber nur einen Link und keinen Code | Vorlage ohne `{{ .Token }}` | Schritt 1.7, Punkt 4 |
-| „Der Code stimmt nicht oder ist abgelaufen." | Codes gelten nur kurz | Neu anfordern; auf dem Zweitgerät dieselbe Adresse wie auf dem Erstgerät |
-| „Diese Adresse wird schon von einem anderen Konto benutzt." | Die Adresse hängt bereits an einer anderen Identität | Auf dem Zweitgerät **anmelden** statt **verknüpfen** |
-| Zweitgerät bleibt leer | Es hängt noch an seiner eigenen anonymen Identität | Unter **Konto** prüfen, ob dort die E-Mail steht; sonst anmelden und erneut synchronisieren |
+| Fehler „Anonymous sign-ins are disabled" | Schritt 1.6 fehlt | Provider einschalten und speichern. Sobald Schritt 1.7 gelaufen ist, braucht die App ihn nicht mehr — er darf dann wieder aus |
+| „E-Mail oder Passwort stimmt nicht." | Tippfehler, oder das Passwort wurde seither geändert | `npm run konto` mit einem neuen Passwort laufen lassen und dieses eintippen |
+| „E-Mail-Anmeldung ist im Supabase-Projekt nicht aktiviert." | Schritt 1.7, Punkt 1 fehlt | Email-Provider einschalten und speichern |
+| Statuszeile sagt „Nicht angemeldet" | so gewollt, solange niemand angemeldet ist | **Einstellungen → Konto → Anmelden** |
+| Zweites Gerät bleibt leer | dort ist niemand angemeldet | **Einstellungen → Konto → Anmelden** mit derselben Adresse, dann „Jetzt synchronisieren" |
 | Alles leer, keine Fehlermeldung | RLS aktiv, aber `owner_id` wird beim Schreiben nicht gesetzt | Beim ersten Schreibversuch melden — das ist dann ein Code-Thema, kein Setup-Thema |
 | Nichts geht, App startet trotzdem | So gewollt: ohne `.env` läuft die App im lokalen Modus (expo-sqlite) weiter | Kein Fehler, nur kein Sync |
 
@@ -178,9 +174,10 @@ Das `-c` leert den Metro-Cache. Ohne das siehst du unter Umständen noch die alt
 - [ ] `schema.sql` gelaufen, Tabellen im Table Editor sichtbar
 - [ ] Jede Tabelle hat RLS aktiv und mindestens eine Policy
 - [ ] Bucket `documents` existiert und ist privat
-- [ ] Anonymous sign-ins aktiviert und gespeichert
-- [ ] Email-Provider aktiviert, Vorlagen enthalten `{{ .Token }}`
-- [ ] Erstgerät verknüpft, User-ID unverändert (`is_anonymous = false`)
+- [ ] Anonymous sign-ins aktiviert und gespeichert (nur bis Schritt 1.7)
+- [ ] Email-Provider aktiviert
+- [ ] `npm run konto` gelaufen, User-ID unverändert (`is_anonymous = false`)
+- [ ] In der App unter **Einstellungen → Konto** angemeldet, Adresse steht dort
 - [ ] `.env` liegt in `C:\Projekte\Kompendium` mit URL und Anon Key
 - [ ] `.env` steht in `.gitignore`
 - [ ] `npx expo start -c` läuft ohne Supabase-Fehler in der Konsole

@@ -5,8 +5,7 @@
  *
  *   Synchronisierung   Statuszeile mit Wolkensymbol und Zeitpunkt, darunter
  *                      "Jetzt synchronisieren" als Mint-Textzeile
- *   Konto              anonym oder mit E-Mail verknuepft; erst verknuepft
- *                      kann ein zweites Geraet denselben Bestand sehen
+ *   Konto              wer angemeldet ist, Anmelden/Abmelden, Kennung
  *   Speicher           Balken aus zwei Segmenten mit Legende, "Offline
  *                      behaltene Dokumente", Papierkorb (beide mit Anzahl),
  *                      "Cache leeren"
@@ -27,9 +26,14 @@
  * **Warum "Konto" eine eigene Gruppe ist und nicht in "Synchronisierung"
  * steht:** die Sync-Gruppe beantwortet "ist alles oben?", die Konto-Gruppe
  * "wem gehoert das oben?". Beides in einer Gruppe stuende nebeneinander, ohne
- * dass die Ueberschrift noch beides traegt — und die Gerätekennung, die es
- * dort schon gab, gehoert ohnehin zur zweiten Frage. Sie ist deshalb
- * mitgewandert.
+ * dass die Ueberschrift noch beides traegt — und die Kennung, die es dort
+ * schon gab, gehoert ohnehin zur zweiten Frage. Sie ist deshalb mitgewandert.
+ *
+ * Das Anmelden sitzt hier und nicht als Schirm vor der App: die lokale
+ * Datenbank ist die Wahrheitsquelle, jeder Screen rendert offline
+ * vollstaendig, und ein Schirm davor machte die Bibliothek ohne Netz
+ * unbenutzbar — fuer einen Vorgang, den man pro Installation genau einmal
+ * braucht (siehe `data/supabase.ts` und `./LoginSheet`).
  *
  * Der Inhalt beginnt auf dem Seitenrand 16 unter der Sync-Leiste — derselbe
  * Abstand wie in Bibliothek und Ordner. Vorher waren es 8, wodurch die erste
@@ -46,7 +50,7 @@ import * as Clipboard from 'expo-clipboard';
 import { clearCache } from '../../data/cache';
 import { formatRelative, formatTime } from '../../data/format';
 import { storageUsage } from '../../data/storage';
-import { isSupabaseConfigured, signOut } from '../../data/supabase';
+import { isSupabaseConfigured } from '../../data/supabase';
 import { useDocumentStore } from '../../state/documents';
 import { useSessionStore } from '../../state/session';
 import { syncLabels, useSyncStore } from '../../state/sync';
@@ -63,7 +67,7 @@ import { TitleHeader } from '../../ui/ScreenHeader';
 import { SettingsBlock, SettingsGroup, SettingsRow } from '../../ui/SettingsList';
 import { SyncIndicator } from '../../ui/SyncIndicator';
 import { Toast } from '../../ui/Toast';
-import { AccountSheet, type AccountMode } from './AccountSheet';
+import { LoginSheet } from './LoginSheet';
 import { StorageSummary } from './StorageSummary';
 
 /** Version der App — steht in Blatt `3i` als "Version 1.4.0". */
@@ -82,30 +86,37 @@ export function SettingsScreen() {
   const lastError = useSyncStore((state) => state.lastError);
   const userId = useSessionStore((state) => state.userId);
   const identity = useSessionStore((state) => state.identity);
-  const refreshIdentity = useSessionStore((state) => state.refresh);
+  const sessionStatus = useSessionStore((state) => state.status);
+  const logOut = useSessionStore((state) => state.logOut);
 
   const [notice, setNotice] = useState<string | null>(null);
-  const [accountMode, setAccountMode] = useState<AccountMode | null>(null);
+  const [loginOpen, setLoginOpen] = useState(false);
 
   const usage = useMemo(() => storageUsage(documents), [documents]);
 
   const syncIcon =
-    status === 'error' ? Warning : status === 'pending' ? CloudSlash : CloudCheck;
+    status === 'error'
+      ? Warning
+      : status === 'pending' || status === 'signed-out'
+        ? CloudSlash
+        : CloudCheck;
   const syncTint =
     status === 'error'
       ? semantic.danger
-      : status === 'pending'
+      : status === 'pending' || status === 'signed-out'
         ? textColor.secondary
         : accent.base;
   // Im Fehlerfall steht der Grund unter dem Wort. "Sync fehlgeschlagen" allein
-  // laesst den Nutzer raten, ob er etwas tun kann — "Anonymous sign-ins are
-  // disabled" beantwortet genau das.
+  // laesst den Nutzer raten, ob er etwas tun kann — "Keine Verbindung."
+  // beantwortet genau das. Ohne Anmeldung steht dort der Weg heraus.
   const syncNote =
     status === 'error' && lastError !== null
       ? lastError
-      : lastSyncedAt === null
-        ? 'noch nicht synchronisiert'
-        : `zuletzt ${formatTime(lastSyncedAt)} · ${formatRelative(lastSyncedAt)}`;
+      : status === 'signed-out'
+        ? 'melde dich unter „Konto" an'
+        : lastSyncedAt === null
+          ? 'noch nicht synchronisiert'
+          : `zuletzt ${formatTime(lastSyncedAt)} · ${formatRelative(lastSyncedAt)}`;
 
   /**
    * Die Geraetekennung — dieselbe, unter der die Dokumente in Supabase liegen.
@@ -126,12 +137,11 @@ export function SettingsScreen() {
    *
    * Die lokale Datenbank ist die Wahrheitsquelle; sie hier zu leeren waere ein
    * Datenverlust fuer einen Vorgang, der ausschliesslich die Identitaet
-   * betrifft. Wer sich mit derselben Adresse wieder anmeldet, findet alles vor.
+   * betrifft. Wer sich wieder anmeldet, findet alles vor.
    */
   const leaveAccount = async () => {
     try {
-      await signOut();
-      await refreshIdentity();
+      await logOut();
       setNotice('Abgemeldet · deine Dokumente bleiben auf diesem Gerät');
     } catch (error: unknown) {
       setNotice(error instanceof Error ? error.message : String(error));
@@ -182,10 +192,13 @@ export function SettingsScreen() {
             icon={syncIcon}
             iconColor={syncTint}
           />
+          {/* Ohne Anmeldung gibt es nichts anzustossen. Die Zeile bleibt
+              stehen, damit der Aufbau nicht springt, ist aber stumm — und die
+              Statuszeile darueber nennt den Weg. */}
           <SettingsRow
             label={status === 'syncing' ? 'Wird synchronisiert …' : 'Jetzt synchronisieren'}
             action
-            inert={status === 'syncing'}
+            inert={status === 'syncing' || status === 'signed-out'}
             onPress={sync}
           />
         </SettingsGroup>
@@ -194,49 +207,33 @@ export function SettingsScreen() {
           <SettingsGroup title="Konto" style={styles.group}>
             {/* Wort UND Symbol, wie in der Statuszeile darueber. */}
             <SettingsRow
-              label={identity?.email ?? 'Nicht verknüpft'}
+              label={identity?.email ?? 'Nicht angemeldet'}
               note={
-                identity === null
-                  ? 'nicht angemeldet'
-                  : identity.anonymous
-                    ? 'nur auf diesem Gerät — ein zweites Gerät sieht nichts'
-                    : 'verknüpft'
+                identity !== null
+                  ? 'angemeldet · jedes Gerät sieht denselben Bestand'
+                  : 'die Bibliothek läuft weiter, nur der Abgleich ruht'
               }
-              icon={identity !== null && !identity.anonymous ? EnvelopeSimple : UserCircleDashed}
-              iconColor={
-                identity !== null && !identity.anonymous ? accent.base : textColor.secondary
-              }
+              icon={identity !== null ? EnvelopeSimple : UserCircleDashed}
+              iconColor={identity !== null ? accent.base : textColor.secondary}
             />
-
-            {identity === null || identity.anonymous ? (
-              <SettingsRow
-                label={identity === null ? 'Mit E-Mail anmelden' : 'Gerät verknüpfen'}
-                action
-                onPress={() => setAccountMode(identity === null ? 'signin' : 'link')}
-              />
-            ) : (
+            {identity !== null ? (
               <SettingsRow
                 label="Abmelden"
-                note="Deine Dokumente bleiben auf diesem Gerät. Zurück geht es über dieselbe Adresse."
+                note="Deine Dokumente bleiben auf diesem Gerät."
                 action
                 onPress={() => void leaveAccount()}
               />
-            )}
-
-            {/* Auf einem noch nicht verknuepften Geraet ist der zweite Weg
-                trotzdem erreichbar: wer die App neu installiert hat, will sich
-                anmelden und nicht eine zweite Identitaet verknuepfen. */}
-            {identity !== null && identity.anonymous ? (
+            ) : (
               <SettingsRow
-                label="Mit vorhandener E-Mail anmelden"
+                label={sessionStatus === 'signing-in' ? 'Wird geprüft …' : 'Anmelden'}
                 action
-                onPress={() => setAccountMode('signin')}
+                inert={sessionStatus === 'signing-in'}
+                onPress={() => setLoginOpen(true)}
               />
-            ) : null}
-
+            )}
             {userId !== null ? (
               <SettingsRow
-                label="Gerätekennung"
+                label="Kennung"
                 value={`${userId.slice(0, 8)} …`}
                 note="tippen zum Kopieren · npm run upload braucht sie"
                 onPress={() => void copyUserId()}
@@ -270,19 +267,14 @@ export function SettingsScreen() {
         </SettingsGroup>
       </ScrollView>
 
-      <AccountSheet
-        visible={accountMode !== null}
-        mode={accountMode ?? 'link'}
-        onClose={() => setAccountMode(null)}
-        onDone={(next) => {
-          setNotice(next.email === null ? 'Angemeldet' : `Verknüpft mit ${next.email}`);
-          // Erst die Identitaet nachsehen, dann abgleichen: der Abgleich fragt
-          // sie ohnehin selbst, aber die Zeile darueber soll nicht noch den
-          // alten Zustand zeigen, waehrend schon geladen wird.
-          void (async () => {
-            await refreshIdentity();
-            await sync();
-          })();
+      <LoginSheet
+        visible={loginOpen}
+        onClose={() => setLoginOpen(false)}
+        onDone={(email) => {
+          setNotice(email === null ? 'Angemeldet' : `Angemeldet als ${email}`);
+          // Gleich abgleichen: wer sich anmeldet, will seinen Bestand sehen und
+          // nicht erst noch eine zweite Zeile antippen.
+          void sync();
         }}
       />
 

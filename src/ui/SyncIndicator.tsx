@@ -1,11 +1,17 @@
 /**
  * 15 · Sync-Indikator — 2 px hohe Leiste direkt unter dem Header.
  *
- *   syncing   Mint-Segment auf 38 % Breite, Deckkraft 0.25 → 1 → 0.25 in 1400 ms
- *   pending   durchgehend `warning`
- *   idle      nur die Spur, praktisch unsichtbar
- *   error     die Leiste entfaellt: der 36-px-Streifen ERSETZT sie, zwei
- *             Leisten uebereinander waeren ein Bruch
+ *   syncing     Mint-Segment auf 38 % Breite, Deckkraft 0.25 → 1 → 0.25 in 1400 ms
+ *   pending     durchgehend `warning`
+ *   idle        nur die Spur, praktisch unsichtbar
+ *   signed-out  wie `idle`. Nicht angemeldet ist kein Fehler und keine offene
+ *               Aenderung: die Bibliothek funktioniert vollstaendig, nur der
+ *               Abgleich ruht. Eine gelbe Leiste ueber jedem Screen waere ein
+ *               Alarm fuer einen Zustand, den der Nutzer bewusst gewaehlt hat
+ *               — gesagt wird es dort, wo man etwas tun kann: in den
+ *               Einstellungen unter "Konto".
+ *   error       die Leiste entfaellt: der 36-px-Streifen ERSETZT sie, zwei
+ *               Leisten uebereinander waeren ein Bruch
  *
  * "Bewegung reduzieren" haelt das Segment bei voller Deckkraft an — der
  * Zustand bleibt erkennbar, nur ohne Puls.
@@ -16,7 +22,7 @@ import { Animated, StyleSheet, View, type StyleProp, type ViewStyle } from 'reac
 import { accent, bg, duration, easingNative, semantic, size } from '../theme';
 import { useReduceMotion } from '../theme/useReduceMotion';
 
-export type SyncStatus = 'idle' | 'syncing' | 'pending' | 'error';
+export type SyncStatus = 'idle' | 'syncing' | 'pending' | 'signed-out' | 'error';
 
 export function SyncIndicator({
   status,
@@ -66,7 +72,9 @@ export function SyncIndicator({
           ? 'Synchronisierung laeuft'
           : status === 'pending'
             ? 'Aenderungen offen'
-            : 'Synchron'
+            : status === 'signed-out'
+              ? 'Nicht angemeldet'
+              : 'Synchron'
       }
     >
       {status === 'syncing' ? (

@@ -84,11 +84,12 @@ function fail(message) {
  * mehreren fragt es lieber nach, statt zu raten: unter der falschen Kennung
  * hochgeladen waeren die Dokumente da, aber unsichtbar.
  *
- * Seit der E-Mail-Verknuepfung ist das die Kennung des verknuepften KONTOS und
- * nicht mehr die einer anonymen Geraetesitzung. Sie aendert sich dabei NICHT:
- * verknuepft wird die vorhandene Identitaet, sie wird nicht ersetzt. Eine
- * einmal eingetragene KOMPENDIUM_OWNER_ID bleibt also gueltig — und wer sich
- * auf einem zweiten Geraet anmeldet, landet unter derselben Kennung.
+ * Seit es ein festes Konto gibt, ist das dessen Kennung und nicht mehr die
+ * einer anonymen Geraetesitzung. Sie aendert sich dabei NICHT:
+ * `scripts/account.mjs` setzt E-Mail und Passwort an der vorhandenen
+ * Identitaet, statt eine neue anzulegen. Eine einmal eingetragene
+ * KOMPENDIUM_OWNER_ID bleibt also gueltig, und jedes weitere Geraet meldet
+ * sich unter derselben Kennung an.
  */
 async function ownerId(admin, configured) {
   if (configured) return configured;
@@ -112,9 +113,7 @@ async function ownerId(admin, configured) {
     fail(
       'Trage die richtige in .env.local als KOMPENDIUM_OWNER_ID ein.\n' +
         'Welche das ist, zeigen die Einstellungen der App unter "Konto" —\n' +
-        'die Zeile "Geraetekennung" kopiert sie beim Antippen. Es ist die\n' +
-        'Kennung des verknuepften Kontos, nicht die einer anonymen\n' +
-        'Geraetesitzung: das Verknuepfen aendert die Kennung nicht.'
+        'die Zeile "Kennung" kopiert sie beim Antippen.'
     );
   }
   return users[0].id;

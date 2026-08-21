@@ -106,15 +106,21 @@ Spalte.
   vier Policies (`documents_read/write/update/delete`), die den Zugriff auf
   den eigenen Pfad-Präfix (`(storage.foldername(name))[1] = auth.uid()::text`)
   beschränken.
-- **Auth:** anonymes Sign-in (`supabase.auth.signInAnonymously()`), kein
-  Login-Screen. Ein anonymer Nutzer bekommt eine echte, dauerhafte User-ID,
-  die als `owner_id` in den Zeilen landet und auf die RLS zugreift.
-  Für ein zweites Gerät wird diese Identität mit einer E-Mail **verknüpft**
-  (`auth.updateUser({ email })`, siehe `src/data/supabase.ts`) — sie wird
-  dabei nie ersetzt, sonst wären alle vorhandenen Zeilen verwaist. Bestätigt
-  wird mit dem sechsstelligen Code aus der Mail (`verifyOtp`), nicht mit einem
-  Magic Link: der bräuchte einen Deep-Link-Rückweg, den Expo Go nicht
-  verlässlich bedient.
+- **Auth:** ein Konto mit E-Mail und Passwort, angemeldet über ein Sheet in den
+  Einstellungen (`screens/settings/LoginSheet.tsx`). Kein Anmeldeschirm vor der
+  App: die lokale Datenbank ist die Wahrheitsquelle, jeder Screen rendert
+  offline vollständig — ein Schirm davor machte die Bibliothek ohne Netz
+  unbenutzbar. Nicht angemeldet ist ein normaler Zustand (`signed-out` im
+  Sync-Status), kein Fehler.
+  Die Session liegt in AsyncStorage und überlebt den Neustart; das Passwort
+  wird nirgends abgelegt. Im App-Bundle stehen nur URL und Anon Key, beide ohne
+  Anmeldung wertlos.
+  **Kein anonymer Rückfall:** er wäre neben einem Login eine Falle — nach dem
+  Abmelden entstünde still eine zweite Identität mit leerer Bibliothek.
+  Das Konto selbst legt `scripts/account.mjs` (`npm run konto`) an: es setzt
+  E-Mail und Passwort per `auth.admin.updateUserById` an der **vorhandenen**
+  Zeile, damit die Kennung bleibt — sonst wären alle bisherigen Zeilen
+  verwaist.
 
 ---
 
@@ -343,8 +349,8 @@ andere als die des Handys — die App sähe die hochgeladenen Zeilen nie. Es
 schreibt deshalb mit dem Service-Role-Key aus `.env.local` und setzt `owner_id`
 selbst auf die Kennung des Geräts (sie steht in den Einstellungen unter
 „Konto", und bei genau einer Identität im Projekt findet das Skript sie
-allein). Das Verknüpfen mit einer E-Mail ändert diese Kennung nicht — eine
-einmal eingetragene `KOMPENDIUM_OWNER_ID` bleibt gültig. Dieser Schlüssel umgeht RLS vollständig und gehört ausschließlich
+allein). `npm run konto` ändert diese Kennung nicht — eine einmal eingetragene
+`KOMPENDIUM_OWNER_ID` bleibt gültig. Dieser Schlüssel umgeht RLS vollständig und gehört ausschließlich
 auf den Rechner — niemals in die App, niemals ins Repository.
 
 ---
@@ -368,14 +374,13 @@ Ca. 15–20 Minuten, zwei Schritte.
 5. **Kontrolle Bucket:** Storage öffnen, Bucket `documents` muss existieren
    und **Private** sein.
 6. **Authentication → Sign In / Providers:** `Anonymous sign-ins`
-   aktivieren und speichern — ohne diese Einstellung schlägt jeder Login
-   fehl und es fließen keine Daten.
-7. Am selben Ort **Email** aktivieren und in den Mail-Vorlagen (`Confirm
-   signup`, `Magic Link`, `Change Email Address`) `{{ .Token }}` ergänzen —
-   die App bestätigt mit dem sechsstelligen Code, nicht mit dem Link. Erst
-   damit lässt sich die Geräte-Identität unter *Einstellungen → Konto* mit
-   einer E-Mail verknüpfen und ein zweites Gerät anmelden. Schritt für
-   Schritt: [supabase/SETUP.md](supabase/SETUP.md).
+   aktivieren und speichern. Nur für den Anfang: bei einem frischen Projekt
+   legt die App damit die erste Identität an, die in Schritt 7 zum Konto wird.
+   Danach darf der Schalter wieder aus.
+7. Am selben Ort **Email** aktivieren, dann einmal `npm run konto --
+   "meine@adresse.de" "ein-langes-passwort"` und in der App unter
+   *Einstellungen → Konto → Anmelden* eintippen. Schritt für Schritt:
+   [supabase/SETUP.md](supabase/SETUP.md).
 
 ### 2. `.env` anlegen
 
@@ -412,7 +417,8 @@ lokal mit expo-sqlite (`isSupabaseConfigured` in `supabase.ts` prüft das).
 | SQL-Fehler `relation … already exists` | Skript lief schon (teilweise) | Bei neuem Projekt: frisches Supabase-Projekt anlegen |
 | SQL-Fehler bei `storage.…` | Storage-Policies brauchen teils erhöhte Rechte | Rest des Skripts läuft; Bucket notfalls per Hand unter Storage → New bucket (`documents`, Private) anlegen |
 | App startet, zeigt aber keine Daten | `.env` nicht geladen | `npx expo start -c`, Variablennamen gegen `.env.example` prüfen |
-| Fehler „Anonymous sign-ins are disabled" | Schritt „Anonymous sign-ins" fehlt | Provider einschalten und speichern |
+| Fehler „Anonymous sign-ins are disabled" | Schritt „Anonymous sign-ins" fehlt, und es gibt noch keine Identität | Provider einschalten, App einmal starten, dann Schritt 7 |
+| Statuszeile sagt „Nicht angemeldet" | so gewollt, solange niemand angemeldet ist | Einstellungen → Konto → Anmelden |
 | Alles leer, keine Fehlermeldung | RLS aktiv, aber `owner_id` wird beim Schreiben nicht gesetzt | Code-Thema, kein Setup-Thema |
 | Nichts geht, App startet trotzdem | So gewollt: ohne `.env` läuft die App im lokalen Modus weiter | Kein Fehler, nur kein Sync |
 

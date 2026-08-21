@@ -1,37 +1,29 @@
 /**
- * Wer die App ist — die anonyme Identitaet bei Supabase.
+ * Wer die App ist — das Konto bei Supabase.
  *
- * Ohne Login-Screen: beim ersten Start legt `ensureSession` eine anonyme
- * Identitaet an, die Session liegt danach in AsyncStorage und ueberlebt jeden
- * Neustart. Diese eine Kennung ist der Schluessel zu allem, was oben liegt —
- * jede Zeile in Supabase gehoert ihr (`owner_id`), und RLS laesst nur sie
- * daran.
+ * Diese eine Kennung ist der Schluessel zu allem, was oben liegt: jede Zeile
+ * gehoert ihr (`owner_id`), und RLS laesst nur sie daran. Deshalb steht sie
+ * hier im Zustand und nicht nur in der Bibliothek von Supabase — der Abgleich
+ * braucht sie, und der Weg vom PC (`scripts/upload.mjs`) laedt unter genau
+ * dieser Kennung hoch. Wer sie nachsehen will, findet sie in den
+ * Einstellungen.
  *
- * Deshalb steht sie hier im Zustand und nicht nur in der Bibliothek von
- * Supabase: der Abgleich braucht sie, und der Weg vom PC in die Bibliothek
- * braucht sie auch — das Skript `scripts/upload.mjs` laedt unter genau dieser
- * Kennung hoch. Wer sie nachsehen will, findet sie in den Einstellungen.
+ * Angemeldet wird ueber ein Sheet in den Einstellungen, nicht ueber einen
+ * Anmeldeschirm vor der App: die lokale Datenbank ist die Wahrheitsquelle, und
+ * jeder Screen rendert offline vollstaendig (Begruendung ausfuehrlich in
+ * `data/supabase.ts`). Nicht angemeldet ist deshalb ein normaler Zustand und
+ * kein Fehler — die Bibliothek funktioniert, nur der Abgleich ruht.
  *
- * Faellt die Anmeldung aus, laeuft die App weiter: die lokale Datenbank ist
- * die Wahrheitsquelle, Supabase ist der Abgleich. `status` sagt, woran es
- * liegt, statt es zu verschweigen.
- *
- * Seit Paket C ist die anonyme Identitaet nur noch der Anfang: sie laesst sich
- * mit einer E-Mail verknuepfen, und erst dann kann ein zweites Geraet
- * denselben Bestand sehen. `identity` haelt fest, in welchem der beiden
- * Zustaende die App gerade ist — die Einstellungen zeigen genau das.
+ * Die Session ueberlebt den Neustart (AsyncStorage). `restore()` beim Start
+ * sieht nur nach, ob noch eine da ist; angelegt wird hier nie etwas von
+ * selbst.
  */
 import { create } from 'zustand';
 
-import {
-  currentIdentity,
-  ensureSession,
-  isSupabaseConfigured,
-  type Identity,
-} from '../data/supabase';
+import { currentIdentity, isSupabaseConfigured, logIn, logOut, type Identity } from '../data/supabase';
 
 export type SessionStatus =
-  /** Noch nicht versucht. */
+  /** Noch nicht nachgesehen. */
   | 'idle'
   /** Meldet gerade an. */
   | 'signing-in'
@@ -39,20 +31,18 @@ export type SessionStatus =
   | 'ready'
   /** Keine Zugangsdaten in `.env` — die App laeuft rein lokal. */
   | 'unconfigured'
-  /** Zugangsdaten da, Anmeldung gescheitert (Netz, oder Anonymous aus). */
-  | 'failed';
+  /** Konfiguriert, aber niemand angemeldet. Kein Fehler. */
+  | 'signed-out';
 
 interface SessionState {
   status: SessionStatus;
   userId: string | null;
-  /** Anonym oder verknuepft — `null`, solange niemand angemeldet ist. */
   identity: Identity | null;
-  signIn: () => Promise<void>;
-  /**
-   * Die Identitaet neu nachsehen — nach Verknuepfen, Anmelden und Abmelden.
-   * Ohne diesen Aufruf zeigten die Einstellungen weiter den Stand von vorhin.
-   */
-  refresh: () => Promise<void>;
+  /** Beim Start nachsehen, ob noch eine Session da ist. Legt nie eine an. */
+  restore: () => Promise<void>;
+  /** Anmelden. Wirft mit einem deutschen Satz — das Sheet zeigt ihn an. */
+  logIn: (email: string, password: string) => Promise<void>;
+  logOut: () => Promise<void>;
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -60,40 +50,41 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   userId: null,
   identity: null,
 
-  refresh: async () => {
-    if (!isSupabaseConfigured) return;
-    try {
-      const identity = await currentIdentity();
-      set({
-        identity,
-        userId: identity?.userId ?? null,
-        status: identity === null ? 'idle' : 'ready',
-      });
-    } catch (error: unknown) {
-      console.warn('[kompendium] Identitaet liess sich nicht lesen:', error);
-    }
-  },
-
-  signIn: async () => {
+  restore: async () => {
     if (!isSupabaseConfigured) {
       set({ status: 'unconfigured' });
       return;
     }
-    // Zwei Screens gleichzeitig anzumelden legt zwei Identitaeten an — die
-    // zweite haette dann eine leere Bibliothek. Ein Lauf genuegt.
-    if (get().status === 'signing-in' || get().status === 'ready') return;
+    try {
+      const identity = await currentIdentity();
+      set({
+        status: identity === null ? 'signed-out' : 'ready',
+        userId: identity?.userId ?? null,
+        identity,
+      });
+    } catch (error: unknown) {
+      // Ein Aussetzer beim Nachsehen ist kein Abgemeldetsein: die Session kann
+      // durchaus da sein. `signed-out` waere hier eine Behauptung — der naechste
+      // Abgleich fragt ohnehin selbst nach.
+      console.warn('[kompendium] Session liess sich nicht lesen:', error);
+      set({ status: 'signed-out', userId: null, identity: null });
+    }
+  },
 
+  logIn: async (email, password) => {
+    if (get().status === 'signing-in') return;
     set({ status: 'signing-in' });
     try {
-      const userId = await ensureSession();
-      if (userId === null) {
-        set({ status: 'failed', userId: null, identity: null });
-        return;
-      }
-      set({ status: 'ready', userId, identity: await currentIdentity() });
+      const identity = await logIn(email, password);
+      set({ status: 'ready', userId: identity.userId, identity });
     } catch (error: unknown) {
-      console.warn('[kompendium] Anmeldung bei Supabase fehlgeschlagen:', error);
-      set({ status: 'failed', userId: null, identity: null });
+      set({ status: 'signed-out', userId: null, identity: null });
+      throw error;
     }
+  },
+
+  logOut: async () => {
+    await logOut();
+    set({ status: 'signed-out', userId: null, identity: null });
   },
 }));

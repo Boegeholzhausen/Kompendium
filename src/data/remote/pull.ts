@@ -29,7 +29,7 @@ import {
 } from '../db/repository';
 import type { DocType } from '../../theme/tile';
 import type { StoredDocument } from '../library';
-import { ensureSession, supabase } from '../supabase';
+import { currentUserId, supabase } from '../supabase';
 import { tagPalette } from '../../theme/colors';
 
 /**
@@ -92,7 +92,7 @@ async function since(table: string, watermark: string | null) {
 export async function pullChanges(): Promise<PullResult> {
   if (supabase === null) throw new Error('Supabase ist nicht eingerichtet.');
 
-  const userId = await ensureSession();
+  const userId = await currentUserId();
   if (userId === null) throw new Error('Keine Anmeldung bei Supabase.');
 
   if ((await readSyncState('reset_done')) === null) {

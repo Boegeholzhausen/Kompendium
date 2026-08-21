@@ -27,6 +27,7 @@ import { useFolderStore } from './folders';
 import { useLibraryStore } from './library';
 import { useSearchStore } from './search';
 import { useSyncStore } from './sync';
+import type { SyncStatus } from '../ui/SyncIndicator';
 import { useViewerStore } from './viewer';
 
 let running: Promise<void> | null = null;
@@ -65,10 +66,19 @@ async function purgeExpiredTrash(documents: StoredDocument[]): Promise<StoredDoc
  * Nebenlaeufig zum Verteilen des Snapshots: die Bibliothek soll nicht auf eine
  * Zaehlung warten, die nur einen Streifen am oberen Rand betrifft. Faellt sie
  * aus, bleibt `pending` stehen — die vorsichtigere der beiden Aussagen.
+ *
+ * Nur solange noch niemand etwas Besseres weiss: `sync()` laeuft nebenher und
+ * ist schneller fertig (es wartet auf keine Datenbank). Hat es bereits
+ * entschieden — es gleicht ab, niemand ist angemeldet, oder es ist etwas
+ * schiefgegangen —, waere diese Zaehlung die aeltere Auskunft und schriebe
+ * "Synchron" ueber "Nicht angemeldet".
  */
+const DECIDED: SyncStatus[] = ['syncing', 'signed-out', 'error'];
+
 async function setInitialSyncStatus(): Promise<void> {
   try {
     const open = await countOutbox();
+    if (DECIDED.includes(useSyncStore.getState().status)) return;
     useSyncStore.getState().setStatus(open === 0 ? 'idle' : 'pending');
   } catch (error: unknown) {
     console.warn('[kompendium] Offene Aenderungen liessen sich nicht zaehlen:', error);
@@ -139,7 +149,9 @@ function readAndDistribute(): Promise<void> {
     } catch (error: unknown) {
       console.warn('[kompendium] Datenbank liess sich nicht lesen:', error);
       useDocumentStore.getState().hydrate([]);
-      useSyncStore.getState().setStatus('idle');
+      if (!DECIDED.includes(useSyncStore.getState().status)) {
+        useSyncStore.getState().setStatus('idle');
+      }
     }
   })();
 }
