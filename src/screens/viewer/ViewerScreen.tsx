@@ -29,15 +29,13 @@
  * bleibt die alte Position trotzdem — beim naechsten Oeffnen ohne Begriff
  * greift sie wieder.
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Share, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import * as Sharing from 'expo-sharing';
 
-import { documentUri, readDocument } from '../../data/cache';
-import { downloadDocument, needsDownload } from '../../data/remote/download';
-import { sampleDocumentHtml } from '../../data/sampleDocumentHtml';
+import { documentUri } from '../../data/cache';
 import { useAppearanceStore } from '../../state/appearance';
 import { documentById, useDocumentStore } from '../../state/documents';
 import { colorOf, useFolderStore } from '../../state/folders';
@@ -62,11 +60,13 @@ import {
 import { Text } from '../../ui/Text';
 import { Toast } from '../../ui/Toast';
 import { MoveSheet } from '../folders/MoveSheet';
-import { DocumentView, type FindCommand } from './DocumentView';
+import { DocumentView } from './DocumentView';
 import { FindSheet } from './FindSheet';
 import { InfoSheet } from './InfoSheet';
 import { OfflineNotice } from './OfflineNotice';
 import { INFO_SHEET_RATIO } from './metrics';
+import { useDocumentHtml } from './useDocumentHtml';
+import { useFindInDocument } from './useFindInDocument';
 import { ViewerActionBar, ViewerHeader } from './ViewerChrome';
 
 /** Was zuletzt geschah — der Toast bietet dafuer 5 Sekunden "Rueckgaengig". */
@@ -116,14 +116,17 @@ export function ViewerScreen({ documentId, searchTerm, onBack }: ViewerScreenPro
   const isOnline = useNetworkStore((state) => state.isOnline);
 
   /**
-   * Ist der Versuch, die Datei nachzuladen, gescheitert?
-   *
-   * Mit Netz ist ein nicht gecachtes Dokument zunaechst nur eine Wartezeit.
-   * Bleibt der Abruf aber erfolglos, ist die Wartezeit vorbei und das Dokument
-   * genauso wenig zu oeffnen wie ohne Netz — dann soll auch dasselbe dastehen
-   * statt einer leeren Buehne, die nichts erklaert.
+   * Das HTML und ob sein Nachladen gescheitert ist — beides aus einem Hook,
+   * der die drei Quellen (Dateicache, Storage, erzeugter Beispielinhalt)
+   * hinter einem Wert zusammenfasst.
    */
-  const [loadFailed, setLoadFailed] = useState(false);
+  const { html, loadFailed } = useDocumentHtml({
+    document,
+    isOnline,
+    markCached,
+    padTop: insets.top + size.viewerHeaderHeight,
+    padBottom: insets.bottom + size.viewerActionBarHeight + space['16'],
+  });
 
   /**
    * Screen 22 (Blatt `4d`): weder im Gerätespeicher noch nachladbar. Mit Netz
@@ -141,22 +144,17 @@ export function ViewerScreen({ documentId, searchTerm, onBack }: ViewerScreenPro
   const initialOffset = useViewerStore((state) => state.scrollPositions[documentId] ?? 0);
 
   const [chromeVisible, setChromeVisible] = useState(true);
-  /** Der Inhalt aus dem Dateicache; `null`, solange er noch gelesen wird. */
-  const [cachedHtml, setCachedHtml] = useState<string | null>(null);
   const [activeSheet, setActiveSheet] = useState<null | 'info' | 'move' | 'find'>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [undoable, setUndoable] = useState<UndoableAction | null>(null);
   /** Meldungen ohne "Rueckgaengig" — "Erneut versuchen", Teilen, Links. */
   const [plainNote, setPlainNote] = useState<PlainNote | null>(null);
 
-  /** Suchen im Dokument: Eingabe, letzter Auftrag und die Antwort der WebView. */
-  const [findTerm, setFindTerm] = useState('');
-  const [findCommand, setFindCommand] = useState<FindCommand | null>(null);
-  const [findResult, setFindResult] = useState({ total: 0, index: 0 });
-  const [findCollapsed, setFindCollapsed] = useState(false);
-
   /** Der Begriff aus der Adresse — leer, wenn der Viewer nicht aus der Suche kommt. */
   const jumpTerm = (searchTerm ?? '').trim();
+
+  /** Suchen im Dokument: Eingabe, letzter Auftrag und die Antwort der WebView. */
+  const find = useFindInDocument(jumpTerm);
 
   /**
    * Kommt ein Suchbegriff mit, gewinnt er gegen die gemerkte Leseposition —
@@ -174,37 +172,18 @@ export function ViewerScreen({ documentId, searchTerm, onBack }: ViewerScreenPro
   const lastOffset = useRef(restoreOffset);
 
   /**
-   * Der Auftragszaehler steht in einem Ref: zweimal "weiter" mit demselben
-   * Begriff waeren sonst derselbe Auftrag, und die WebView bekaeme den zweiten
-   * Tipp nicht zu sehen.
+   * Nach dem Laden: kam der Viewer aus einem Suchtreffer, klappt das Sheet
+   * eingeklappt auf — damit sichtbar ist, warum das Dokument nicht oben steht.
    */
-  const findId = useRef(0);
-
-  const sendFind = useCallback((kind: FindCommand['kind'], term: string) => {
-    findId.current += 1;
-    setFindCommand({ id: findId.current, kind, term });
-    if (kind === 'clear') setFindResult({ total: 0, index: 0 });
-  }, []);
-
-  /**
-   * Der Sprung aus einem Suchtreffer laeuft genau einmal, nach `onLoadEnd`:
-   * vorher gibt es im Dokument nichts zu finden.
-   */
-  const jumped = useRef(false);
   const handleLoaded = useCallback(() => {
-    if (jumped.current || jumpTerm === '') return;
-    jumped.current = true;
-    setFindTerm(jumpTerm);
-    setFindCollapsed(true);
-    setActiveSheet('find');
-    sendFind('search', jumpTerm);
-  }, [jumpTerm, sendFind]);
+    if (find.jumpAfterLoad()) setActiveSheet('find');
+  }, [find]);
 
   /** Schliessen hebt die Hervorhebung im Dokument wieder auf. */
   const closeFind = useCallback(() => {
     setActiveSheet(null);
-    sendFind('clear', '');
-  }, [sendFind]);
+    find.clear();
+  }, [find]);
 
   /**
    * "Geoeffnet 12×" im Info-Sheet zaehlt Besuche, nicht Renderdurchlaeufe —
@@ -246,62 +225,6 @@ export function ViewerScreen({ documentId, searchTerm, onBack }: ViewerScreenPro
 
   const title = document?.title ?? '';
 
-  /**
-   * Importierte Dokumente liegen als Datei im Cache und werden von dort
-   * gelesen; die Erstbefuellung hat keine Datei und bekommt ihren erzeugten
-   * Beispielinhalt. Die Buehne bleibt so lange leer — sie ist `bg/base`, es
-   * blitzt also nichts auf.
-   */
-  /**
-   * Was der Abgleich gebracht hat, ist zunaechst nur eine Zeile: die Datei
-   * liegt noch oben. Sie kommt hier nach — beim Oeffnen, nicht beim Abgleich
-   * (DATABASE_STRUCTURE.md, Sync-Strategie).
-   *
-   * Scheitert der Abruf, passiert nichts weiter: das Dokument bleibt
-   * `cached: false` und zeigt damit den Zustand "nicht geladen" aus Blatt
-   * `4c` — dieselbe Darstellung wie fuer jedes andere Dokument ohne Inhalt,
-   * statt einer eigenen Fehlermeldung fuer denselben Sachverhalt.
-   */
-  useEffect(() => {
-    if (document === undefined || !isOnline) return;
-    if (!needsDownload(document)) return;
-
-    let alive = true;
-    setLoadFailed(false);
-    downloadDocument(document)
-      .then((result) => {
-        if (!alive) return;
-        setCachedHtml(result.html);
-        markCached(document.id, result.cacheKey, result.sizeBytes);
-      })
-      .catch((error: unknown) => {
-        console.warn('[kompendium] Dokument liess sich nicht laden:', error);
-        if (alive) setLoadFailed(true);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [document, isOnline, markCached]);
-
-  const cacheKey = document?.cacheKey ?? null;
-  useEffect(() => {
-    if (cacheKey === null) {
-      setCachedHtml(null);
-      return;
-    }
-    let alive = true;
-    readDocument(cacheKey)
-      .then((html) => {
-        if (alive) setCachedHtml(html ?? '');
-      })
-      .catch(() => {
-        if (alive) setCachedHtml('');
-      });
-    return () => {
-      alive = false;
-    };
-  }, [cacheKey]);
-
   /** "Bildschirm anlassen — Beim Lesen nicht sperren" (Blatt `6b`). */
   useEffect(() => {
     if (!keepScreenOn) return;
@@ -310,22 +233,6 @@ export function ViewerScreen({ documentId, searchTerm, onBack }: ViewerScreenPro
       void deactivateKeepAwake('kompendium-viewer');
     };
   }, [keepScreenOn]);
-
-  const html = useMemo(() => {
-    if (!document) return '';
-    if (document.cacheKey !== null) return cachedHtml ?? '';
-    // Der erzeugte Beispielinhalt gilt ausschliesslich fuer die Erstbefuellung.
-    // Ihn auch fuer ein echtes Dokument zu zeigen, dessen Datei gerade erst
-    // geholt wird, waere die schlimmste Form von Platzhalter: einer, der wie
-    // der Inhalt aussieht. Bis die Datei da ist, bleibt die Buehne leer —
-    // sie ist `bg/base`, es blitzt also nichts auf.
-    if (document.source !== 'sample') return '';
-    return sampleDocumentHtml(
-      document,
-      insets.top + size.viewerHeaderHeight,
-      insets.bottom + size.viewerActionBarHeight + space['16']
-    );
-  }, [document, cachedHtml, insets.top, insets.bottom]);
 
   /**
    * Aus- und Einblenden der Bedienung. Erst ab 8 px Unterschied, damit ein
@@ -352,6 +259,7 @@ export function ViewerScreen({ documentId, searchTerm, onBack }: ViewerScreenPro
    * der Toast sagt warum. Ein Knopf, der stumm nichts Brauchbares tut, waere
    * die schlechtere Antwort.
    */
+  const cacheKey = document?.cacheKey ?? null;
   const handleShare = useCallback(() => {
     void (async () => {
       const uri = cacheKey === null ? null : documentUri(cacheKey);
@@ -361,17 +269,41 @@ export function ViewerScreen({ documentId, searchTerm, onBack }: ViewerScreenPro
           return;
         }
         await Share.share({ title, message: title });
-        setPlainNote({ message: 'Dieses Beispiel hat keine Datei zum Teilen', icon: ShareNetwork });
+        // Zwei Gruende, aus denen es hier ohne Datei weitergeht, und sie
+        // verdienen verschiedene Saetze: der Beispiel-Bestand HAT keine (sein
+        // HTML entsteht erst beim Oeffnen), ein echtes Dokument hat seine
+        // gerade nicht auf dem Geraet — etwa nach "Cache leeren". "Dieses
+        // Beispiel" ueber einem selbst importierten Dokument waere schlicht
+        // falsch.
+        setPlainNote({
+          message:
+            document?.source === 'sample'
+              ? 'Dieses Beispiel hat keine Datei zum Teilen'
+              : 'Dieses Dokument liegt gerade nicht auf dem Gerät',
+          icon: ShareNetwork,
+        });
       } catch (error: unknown) {
         const reason = error instanceof Error ? error.message : 'unbekannter Grund';
         setPlainNote({ message: `Teilen fehlgeschlagen: ${reason}`, icon: Warning });
       }
     })();
-  }, [cacheKey, title]);
+  }, [cacheKey, document?.source, title]);
 
   /** A2: ein externer Link, den das System nicht oeffnen konnte. */
   const handleExternalLinkFailed = useCallback(() => {
     setPlainNote({ message: 'Link ließ sich nicht öffnen', icon: Warning });
+  }, []);
+
+  /**
+   * Das Dokument wollte von sich aus in den Browser — ohne Fingertipp.
+   *
+   * Gemeldet und nicht verschluckt: bei einem selbstgebauten Dokument ist das
+   * ein Fehler in seinem Skript, den man sehen will, und bei einem geladenen
+   * ist es genau das, wovor der Riegel schuetzt. Ohne "Rueckgaengig" — hier
+   * gibt es nichts zurueckzunehmen, es ist ja nichts passiert.
+   */
+  const handleExternalLinkBlocked = useCallback(() => {
+    setPlainNote({ message: 'Das Dokument wollte eine Seite öffnen', icon: Warning });
   }, []);
 
   /**
@@ -437,7 +369,7 @@ export function ViewerScreen({ documentId, searchTerm, onBack }: ViewerScreenPro
       icon: MagnifyingGlass,
       onPress: () => {
         setMenuOpen(false);
-        setFindCollapsed(false);
+        find.setCollapsed(false);
         setActiveSheet('find');
       },
     },
@@ -514,8 +446,9 @@ export function ViewerScreen({ documentId, searchTerm, onBack }: ViewerScreenPro
           onScroll={handleScroll}
           onLoaded={handleLoaded}
           onExternalLinkFailed={handleExternalLinkFailed}
-          find={findCommand}
-          onFindResult={setFindResult}
+          onExternalLinkBlocked={handleExternalLinkBlocked}
+          find={find.command}
+          onFindResult={find.setResult}
         />
       )}
 
@@ -583,18 +516,18 @@ export function ViewerScreen({ documentId, searchTerm, onBack }: ViewerScreenPro
 
       <FindSheet
         visible={activeSheet === 'find'}
-        collapsed={findCollapsed}
-        term={findTerm}
-        onChangeTerm={setFindTerm}
-        onSubmit={() => sendFind('search', findTerm.trim())}
+        collapsed={find.collapsed}
+        term={find.term}
+        onChangeTerm={find.setTerm}
+        onSubmit={() => find.send('search', find.term.trim())}
         // Erst nach einem abgeschickten Auftrag ist "nicht gefunden" eine
         // Aussage — vorher stuende sie da, bevor jemand getippt hat.
-        searched={findCommand !== null && findCommand.kind !== 'clear'}
-        total={findResult.total}
-        index={findResult.index}
-        onNext={() => sendFind('next', findTerm.trim())}
-        onPrevious={() => sendFind('previous', findTerm.trim())}
-        onExpand={() => setFindCollapsed(false)}
+        searched={find.command !== null && find.command.kind !== 'clear'}
+        total={find.result.total}
+        index={find.result.index}
+        onNext={() => find.send('next', find.term.trim())}
+        onPrevious={() => find.send('previous', find.term.trim())}
+        onExpand={() => find.setCollapsed(false)}
         onClose={closeFind}
       />
 

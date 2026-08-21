@@ -20,11 +20,21 @@
 import React, { useEffect, useState } from 'react';
 import { StyleSheet, TextInput, View } from 'react-native';
 
-import { accent, bg, border, iconSize, radius, size, space, text as textColor } from '../theme';
+import {
+  accent,
+  bg,
+  border,
+  iconSize,
+  radius,
+  semantic,
+  size,
+  space,
+  text as textColor,
+} from '../theme';
 import { typeScale } from '../theme/typography';
 import { BottomSheet } from './BottomSheet';
 import { PrimaryButton, SecondaryButton } from './Button';
-import { Info, XCircle } from './icons';
+import { Info, WarningCircle, XCircle } from './icons';
 import { PressableScale } from './press';
 import { Text } from './Text';
 
@@ -40,6 +50,15 @@ export interface RenameSheetProps {
   count: number;
   /** Ganzer Satz der Hinweiszeile, etwa "Wirkt auf alle 12 Dokumente im Ordner". */
   hint: string;
+  /**
+   * Warum dieser Name nicht geht — `null`, wenn er geht.
+   *
+   * Der Aufrufer weiss als einziger, was ein Name kollidieren laesst; das Sheet
+   * kennt nur das Feld. Der Satz ersetzt die Hinweiszeile und sperrt
+   * "Speichern": ein Knopf, der in einen verschluckten Datenbankfehler laeuft,
+   * waere schlimmer als ein gesperrter.
+   */
+  problemWith?: (name: string) => string | null;
   onSubmit: (name: string) => void;
   onClose: () => void;
 }
@@ -51,6 +70,7 @@ export function RenameSheet({
   color,
   count,
   hint,
+  problemWith,
   onSubmit,
   onClose,
 }: RenameSheetProps) {
@@ -61,7 +81,10 @@ export function RenameSheet({
   }, [visible, currentName]);
 
   const trimmed = value.trim();
-  const canSave = trimmed.length > 0 && trimmed !== currentName;
+  // Erst ab dem zweiten Zeichen nachfragen: waehrend des Tippens ueber jeden
+  // Zwischenstand zu meckern waere Laerm, und ein leeres Feld sperrt ohnehin.
+  const problem = trimmed.length === 0 || problemWith === undefined ? null : problemWith(trimmed);
+  const canSave = trimmed.length > 0 && trimmed !== currentName && problem === null;
 
   const submit = () => {
     if (!canSave) return;
@@ -110,10 +133,24 @@ export function RenameSheet({
         ) : null}
       </View>
 
+      {/*
+        Dieselbe Zeile, zwei Aufgaben: solange der Name geht, erklaert sie die
+        Wirkung; geht er nicht, sagt sie warum. Zwei Zeilen untereinander
+        liessen die Hoehe des Sheets beim Tippen springen.
+      */}
       <View style={styles.hint}>
-        <Info size={14} color={textColor.secondary} weight="regular" />
-        <Text variant="caption" tone="secondary" numeric style={styles.hintText}>
-          {hint}
+        {problem === null ? (
+          <Info size={14} color={textColor.secondary} weight="regular" />
+        ) : (
+          <WarningCircle size={14} color={semantic.danger} weight="regular" />
+        )}
+        <Text
+          variant="caption"
+          tone={problem === null ? 'secondary' : 'primary'}
+          numeric
+          style={[styles.hintText, problem === null ? null : styles.hintProblem]}
+        >
+          {problem ?? hint}
         </Text>
       </View>
 
@@ -187,6 +224,9 @@ const styles = StyleSheet.create({
   },
   hintText: {
     flex: 1,
+  },
+  hintProblem: {
+    color: semantic.danger,
   },
   footer: {
     flexDirection: 'row',

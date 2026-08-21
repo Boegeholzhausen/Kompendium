@@ -30,14 +30,26 @@
  *                   (`about:blank#kapitel-3`) laeuft hier durch, sonst waere
  *                   das Inhaltsverzeichnis eines eigenen Dokuments tot.
  *   http(s):        nach draussen an den Systembrowser (`expo-linking`) und
- *                   `false` zurueckgeben. Das Dokument bleibt stehen, wo es
- *                   steht; die Leseposition geht nicht verloren.
+ *                   `false` zurueckgeben — aber nur, wenn der Nutzer eben
+ *                   getippt hat (siehe `handleRequest`). Das Dokument bleibt
+ *                   stehen, wo es steht; die Leseposition geht nicht verloren.
  *   alles andere    blocken (`data:`, `javascript:`, `file:`, Unbekanntes).
  *                   Ein fremdes Schema hat in einem selbstgebauten Dokument
  *                   nichts zu suchen, und ein Fehlgriff waere hier still.
  *
  * Vorher galt `request.url.startsWith('about:')` fuer alles — jeder externe
  * Link war damit stumm wirkungslos.
+ *
+ * ## Was das Dokument nicht darf
+ *
+ * Sein JavaScript laeuft (das ist der Sinn: Rechner, Diagramme, Klapplisten),
+ * aber es kommt nicht ans Netz und nicht aus der App heraus. Zwei Riegel, die
+ * zusammengehoeren: `CONTENT_POLICY` nimmt ihm `fetch`, nachgeladene Skripte
+ * und fremde Bilder, und `handleRequest` laesst einen Seitenwechsel nur nach
+ * einer Beruehrung durch. Lokale Dateien und die Anmeldung waren nie
+ * erreichbar — `allowFileAccess` und die beiden `…FromFileURLs` bleiben auf
+ * ihren Standardwerten, und das Sitzungstoken liegt in AsyncStorage, wo keine
+ * WebView hinsieht.
  *
  * ## Suchen im geoeffneten Dokument (D2)
  *
@@ -65,7 +77,7 @@
  * dort ein `iframe` dieselbe Aufgabe. Die Suche im Dokument gibt es dort
  * nicht: ein fremdes `iframe` laesst sich von aussen nicht durchsuchen.
  */
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, StyleSheet, View } from 'react-native';
 import { openURL } from 'expo-linking';
 import { WebView, type WebViewProps } from 'react-native-webview';
@@ -162,9 +174,91 @@ export interface DocumentViewProps {
   onLoaded?: () => void;
   /** Ein externer Link, den das System nicht oeffnen konnte. */
   onExternalLinkFailed?: (url: string) => void;
+  /**
+   * Das Dokument wollte von sich aus nach draussen — ohne dass jemand getippt
+   * hat. Der Viewer sagt es, statt es stumm zu verschlucken: ein Dokument, das
+   * das versucht, sollte man kennen.
+   */
+  onExternalLinkBlocked?: (url: string) => void;
   /** Suchen im Dokument (D2); jede neue `id` fuehrt den Auftrag aus. */
   find?: FindCommand | null;
   onFindResult?: (state: FindState) => void;
+}
+
+/**
+ * Wie lange ein Fingertipp als Grund fuer einen Seitenwechsel gilt.
+ *
+ * Siehe `handleRequest`: die Android-Fassung von `react-native-webview` reicht
+ * kein `isUserGesture` durch, deshalb dieser Fensterwert.
+ */
+const USER_GESTURE_MS = 2000;
+
+/**
+ * Die Inhaltsrichtlinie, die jedem Dokument vorangestellt wird.
+ *
+ * Ein Dokument in dieser WebView fuehrt sein eigenes JavaScript aus — das ist
+ * Absicht und der Sinn der App (Rechner, Diagramme, Klapplisten). Was es nicht
+ * darf, ist das Geraet verlassen: ohne Richtlinie stehen `fetch`,
+ * `XMLHttpRequest`, fremde Bilder und nachgeladene Skripte offen, und ein
+ * Dokument koennte seinen Inhalt an einen beliebigen Server schicken. Fuer
+ * Dokumente vom eigenen PC ist das unwahrscheinlich; "Von URL laden" holt
+ * aber fremdes HTML aus dem Netz, und dort ist es genau die Frage.
+ *
+ * Was erlaubt bleibt, ist alles, was ein selbstgebautes Dokument braucht:
+ *
+ *   script-src  'unsafe-inline'  eigene Skripte im Dokument — der Rechner
+ *   style-src   'unsafe-inline'  eigene Gestaltung im Dokument
+ *   img-src     data:            eingebettete Bilder und Diagramme
+ *   font-src    data:            eingebettete Schriften
+ *
+ * Was faellt, ist ausschliesslich der Weg nach draussen (`default-src 'none'`
+ * deckt `connect-src`, `frame-src` und `object-src` mit ab). Ein Dokument, das
+ * seine Bibliothek per `<script src="https://…">` nachlaedt, funktioniert
+ * danach nicht mehr — es haette ohne Netz aber ohnehin nie funktioniert, und
+ * eine Bibliothek, die offline liegt, ist der Sinn dieser App.
+ *
+ * Ein `<meta>` dieser Art gilt erst ab der Stelle, an der es steht, und muss
+ * deshalb so frueh wie moeglich in den Kopf. VOR den Doctype darf es dabei
+ * nicht: der muss als Erstes stehen, sonst schaltet der Browser in den
+ * Quirks-Modus und stellt das Dokument anders dar — genau der Eingriff in
+ * fremde Gestaltung, den die App sich sonst ueberall verbietet.
+ */
+const CONTENT_POLICY =
+  `<meta http-equiv="Content-Security-Policy" content="` +
+  `default-src 'none'; ` +
+  `script-src 'unsafe-inline' 'unsafe-eval'; ` +
+  `style-src 'unsafe-inline'; ` +
+  `img-src data: blob:; ` +
+  `font-src data:; ` +
+  `media-src data: blob:` +
+  `">`;
+
+/**
+ * Die Richtlinie an die frueheste richtige Stelle im Dokument setzen.
+ *
+ * Drei Faelle, in dieser Reihenfolge — der erste, der zutrifft, gewinnt:
+ *
+ *   <head …>   direkt dahinter. Der Normalfall, und die frueheste Stelle im
+ *              Kopf, an der ein `<meta>` stehen darf.
+ *   <html …>   direkt dahinter, wenn der Kopf fehlt. Der Browser eroeffnet
+ *              dort selbst einen, und das `<meta>` landet darin.
+ *   sonst      voranstellen. Ein Bruchstueck ohne `<html>` hat keinen Doctype,
+ *              den man verschieben koennte — hier ist nichts zu verlieren.
+ */
+function withContentPolicy(source: string): string {
+  const head = /<head\b[^>]*>/i.exec(source);
+  if (head !== null) {
+    const at = head.index + head[0].length;
+    return source.slice(0, at) + CONTENT_POLICY + source.slice(at);
+  }
+
+  const html = /<html\b[^>]*>/i.exec(source);
+  if (html !== null) {
+    const at = html.index + html[0].length;
+    return source.slice(0, at) + CONTENT_POLICY + source.slice(at);
+  }
+
+  return CONTENT_POLICY + source;
 }
 
 export function DocumentView({
@@ -175,12 +269,27 @@ export function DocumentView({
   onScroll,
   onLoaded,
   onExternalLinkFailed,
+  onExternalLinkBlocked,
   find = null,
   onFindResult,
 }: DocumentViewProps) {
   const opacity = useRef(new Animated.Value(0)).current;
   const [ready, setReady] = useState(false);
   const webRef = useRef<WebView>(null);
+
+  /**
+   * Wann zuletzt jemand die Dokumentflaeche beruehrt hat.
+   *
+   * In einem Ref und nicht im Zustand: jede Beruehrung zeichnete sonst den
+   * Viewer neu, waehrend gelesen wird — dieselbe Ueberlegung wie beim
+   * Scrollversatz im `ViewerScreen`.
+   */
+  const lastTouch = useRef(0);
+
+  // Gemerkt, weil das Dokument mehrere hundert Kilobyte gross sein kann und
+  // jeder Renderdurchlauf sonst eine neue Zeichenkette dieser Groesse baute —
+  // und die WebView sie als neue Quelle ansaehe und das Dokument neu laedt.
+  const guardedHtml = useMemo(() => (html === '' ? '' : withContentPolicy(html)), [html]);
 
   /**
    * Der Auftrag geht erst nach `onLoadEnd` hinaus — vorher gibt es im
@@ -200,12 +309,31 @@ export function DocumentView({
     onScroll?.(event.nativeEvent.contentOffset.y);
   };
 
-  /** Siehe Kopfkommentar: durchlassen, nach draussen geben oder blocken. */
+  /**
+   * Siehe Kopfkommentar: durchlassen, nach draussen geben oder blocken.
+   *
+   * Nach draussen geht nur, was der Nutzer angetippt hat. Die Rueckfrage
+   * unterscheidet das nicht von selbst — ein `location.href = '…'` im Skript
+   * des Dokuments kommt hier genauso an wie ein Fingertipp, und die App oeffnete
+   * daraufhin ungefragt den Systembrowser, mit einer Adresse, die den
+   * Dokumentinhalt als Parameter tragen kann. Ein Dokument darf nicht von sich
+   * aus die App verlassen.
+   *
+   * Als Nutzergeste zaehlt eine Beruehrung in den zwei Sekunden davor. Genauer
+   * geht es hier nicht: die Android-Fassung von `react-native-webview` reicht
+   * kein `isUserGesture` durch. Zwei Sekunden sind lang genug fuer den Weg vom
+   * Antippen bis zur Rueckfrage und zu kurz, als dass ein Skript sich daran
+   * anhaengen koennte, ohne dass der Nutzer gerade selbst getippt hat.
+   */
   const handleRequest: WebViewProps['onShouldStartLoadWithRequest'] = (request) => {
     const url = request.url;
     if (url.startsWith('about:')) return true;
     if (url.startsWith('http:') || url.startsWith('https:')) {
-      openURL(url).catch(() => onExternalLinkFailed?.(url));
+      if (Date.now() - lastTouch.current <= USER_GESTURE_MS) {
+        openURL(url).catch(() => onExternalLinkFailed?.(url));
+      } else {
+        onExternalLinkBlocked?.(url);
+      }
     }
     return false;
   };
@@ -244,10 +372,22 @@ export function DocumentView({
 
   return (
     <View style={styles.stage}>
-      <Animated.View style={[styles.fill, { opacity }]}>
+      {/*
+        `onStartShouldSetResponderCapture` merkt sich die Beruehrung und gibt
+        `false` zurueck: die Ebene wird damit NICHT zum Responder, und Tippen,
+        Scrollen und Auswaehlen im Dokument laufen unveraendert weiter. Es ist
+        ein Mithoeren, kein Abfangen.
+      */}
+      <Animated.View
+        style={[styles.fill, { opacity }]}
+        onStartShouldSetResponderCapture={() => {
+          lastTouch.current = Date.now();
+          return false;
+        }}
+      >
         <WebView
           ref={webRef}
-          source={{ html }}
+          source={{ html: guardedHtml }}
           style={styles.web}
           // Die weisse Flaeche blitzt beim Laden nicht auf, weil die ganze
           // Ebene erst nach `onLoadEnd` eingeblendet wird — bis dahin steht

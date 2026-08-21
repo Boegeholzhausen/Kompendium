@@ -173,10 +173,28 @@ export async function importFromClipboard(
 }
 
 /**
+ * Wie viel HTML von einer Adresse hoechstens angenommen wird.
+ *
+ * Ein selbstgebautes Dokument ist ein paar hundert Kilobyte gross; 8 MB sind
+ * dafuer reichlich Luft. Die Grenze steht hier, weil `response.text()` alles
+ * am Stueck in den Arbeitsspeicher liest — eine Adresse, hinter der ein
+ * Datentraegerabbild liegt, beendete die App sonst durch das System, und zwar
+ * bevor `looksLikeHtml` ueberhaupt hinsieht.
+ */
+const MAX_URL_BYTES = 8 * 1024 * 1024;
+
+/** Wie lange auf eine Antwort gewartet wird, bevor der Versuch abgebrochen wird. */
+const URL_TIMEOUT_MS = 30_000;
+
+/**
  * Weg 3 — "Von URL laden · Adresse eingeben".
  *
  * Ohne Schema wird `https` ergaenzt: wer eine Adresse eintippt, schreibt sie
  * selten vollstaendig, und `http` waere die schlechtere Vermutung.
+ *
+ * Drei Grenzen, die eine fremde Adresse nicht ueberschreiten darf: Zeit,
+ * Groesse und Art des Inhalts. Ohne sie haengt das Sheet an einer Adresse, die
+ * nie antwortet, oder liest ein Vielfaches des verfuegbaren Speichers ein.
  */
 export async function importFromUrl(
   address: string,
@@ -187,15 +205,47 @@ export async function importFromUrl(
 
   const url = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), URL_TIMEOUT_MS);
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, { signal: abort.signal });
     if (!response.ok) {
       return { ok: false, reason: `Die Adresse antwortete mit ${response.status}.` };
     }
+
+    // Der Typ zuerst: ein PDF oder ein Bild waere hier kein Dokument, sondern
+    // Zeichensalat mit ein paar spitzen Klammern darin. Fehlt die Angabe, wird
+    // weitergemacht — `looksLikeHtml` faengt den Rest.
+    const type = response.headers.get('content-type');
+    if (type !== null && !/text\/html|application\/xhtml\+xml|text\/plain/i.test(type)) {
+      return { ok: false, reason: 'Unter der Adresse liegt kein HTML.' };
+    }
+
+    // Die angekuendigte Groesse, sofern der Server sie nennt. Sie ist eine
+    // Behauptung und keine Zusage — deshalb wird unten noch einmal gemessen,
+    // wenn der Text da ist.
+    const announced = Number(response.headers.get('content-length') ?? '');
+    if (Number.isFinite(announced) && announced > MAX_URL_BYTES) {
+      return { ok: false, reason: 'Die Datei ist zu gross für die Bibliothek.' };
+    }
+
     const html = await response.text();
+    if (html.length > MAX_URL_BYTES) {
+      return { ok: false, reason: 'Die Datei ist zu gross für die Bibliothek.' };
+    }
+
     return documentFrom({ html, hint: url, source: 'url' }, existing);
-  } catch {
-    return { ok: false, reason: 'Die Adresse war nicht erreichbar.' };
+  } catch (error: unknown) {
+    // Der Abbruch nach 30 Sekunden ist kein Netzfehler und verdient einen
+    // eigenen Satz: er sagt dem Nutzer, dass es an der Adresse liegt und nicht
+    // an seiner Verbindung.
+    const aborted = error instanceof Error && error.name === 'AbortError';
+    return {
+      ok: false,
+      reason: aborted ? 'Die Adresse hat nicht geantwortet.' : 'Die Adresse war nicht erreichbar.',
+    };
+  } finally {
+    clearTimeout(timer);
   }
 }
 

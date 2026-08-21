@@ -19,6 +19,7 @@ import { create } from 'zustand';
 import { deleteDocument } from '../data/cache';
 import { persist } from '../data/db/persist';
 import * as repository from '../data/db/repository';
+import { forgetDocumentText } from '../data/search';
 import type { StoredDocument } from '../data/library';
 import { useViewerStore } from './viewer';
 
@@ -84,7 +85,8 @@ interface DocumentState {
  *
  * Die gemerkte Leseposition faellt hier mit weg: sie ueberdauert seit Paket B
  * den Neustart, und ein Eintrag zu einem Dokument, das es nicht mehr gibt,
- * wuerde sonst fuer immer mitgeschleppt.
+ * wuerde sonst fuer immer mitgeschleppt. Dasselbe gilt fuer den Text im
+ * Suchpuffer — er haelt den ganzen Inhalt im Arbeitsspeicher.
  */
 export async function purgeDocuments(
   entries: { id: string; cacheKey: string | null }[]
@@ -93,6 +95,10 @@ export async function purgeDocuments(
   await repository.deleteDocuments(entries.map((entry) => entry.id));
   useViewerStore.getState().forgetScroll(entries.map((entry) => entry.id));
   for (const entry of entries) {
+    // Der Text im Suchpuffer gehoert dazu: er haelt den ganzen Inhalt im
+    // Arbeitsspeicher und ueberlebte sonst als Karteileiche bis zum naechsten
+    // Start — bei einem geleerten Papierkorb gleich in Dutzenden.
+    forgetDocumentText(entry.id);
     if (entry.cacheKey !== null) await deleteDocument(entry.cacheKey);
   }
 }

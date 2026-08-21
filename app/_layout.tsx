@@ -30,24 +30,27 @@ import { useAppFonts } from '../src/theme/fonts';
 export default function RootLayout() {
   const fontsReady = useAppFonts();
 
-  useEffect(() => {
-    // Das Ergebnis landet in den Zustaenden; wer darauf wartet, liest
-    // `hydrated` (siehe `state/documents`). Hier gibt es nichts zu halten.
-    void hydrateStores();
-  }, []);
-
   useEffect(() => subscribeNetwork(), []);
 
-  // Session nachsehen und abgleichen laufen nebenher: kein Screen wartet auf
-  // sie, weil kein Screen sie braucht — die Bibliothek rendert aus der lokalen
-  // Datenbank und tauscht die Zeilen aus, wenn neue da sind. Die Reihenfolge
-  // ist trotzdem fest: ohne Anmeldung gibt es nichts abzugleichen, und `sync`
-  // soll das als "Nicht angemeldet" melden und nicht als Fehler.
+  // Lesen, Session nachsehen, abgleichen — alles nebenher, aber in dieser
+  // Reihenfolge. Kein Screen wartet darauf, weil kein Screen es braucht: die
+  // Bibliothek rendert aus der lokalen Datenbank und tauscht die Zeilen aus,
+  // wenn neue da sind (`hydrated` in `state/documents`).
+  //
+  // Das Hydrieren muss trotzdem VOR dem Abgleich fertig sein, und zwar wegen
+  // dessen, was es zuerst tut: die beiden einmaligen Datenwanderungen
+  // (`runDataMigrations`). Die erste schreibt Dokumentkennungen um — liefe
+  // gleichzeitig ein Push, laese er die Outbox zu Zeilen, die es einen
+  // Augenblick spaeter unter anderer Kennung gibt. Und am Ende eines Abgleichs
+  // mit Ergebnis liest `reloadStores()` ohnehin neu; ein danach fertig
+  // werdendes Hydrieren schriebe seinen aelteren Stand darueber.
   //
   // `restore` legt nie eine Identitaet an. Ist keine Session da, bleibt es
-  // dabei, bis sich der Nutzer in den Einstellungen anmeldet.
+  // dabei, bis sich der Nutzer in den Einstellungen anmeldet — und `sync`
+  // meldet das als "Nicht angemeldet" und nicht als Fehler.
   useEffect(() => {
     void (async () => {
+      await hydrateStores();
       await useSessionStore.getState().restore();
       await useSyncStore.getState().sync();
     })();

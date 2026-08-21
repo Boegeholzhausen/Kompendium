@@ -77,6 +77,22 @@ alter table public.documents add column if not exists source_path text;
 create unique index if not exists documents_source_path_idx
   on public.documents(owner_id, source_path) where source_path is not null;
 
+-- Ein Name je Konto, und nur unter den lebenden Zeilen.
+--
+-- Lokal IST der Name der Ausweis (`folders.name` ist dort Primaerschluessel),
+-- und `pushFolders` erkennt einen Ordner ohne `remote_id` genau daran wieder.
+-- Ohne diese Bedingung koennen zwei Geraete, die denselben Ordner anlegen
+-- bevor sie abgleichen, zwei Zeilen erzeugen — der naechste Abruf reicht beide
+-- herunter, lokal gewinnt willkuerlich eine, und die Dokumente der anderen
+-- verlieren ihre Zuordnung. Fuer `documents` gibt es dasselbe Netz schon
+-- (`documents_source_path_idx`).
+--
+-- `where deleted_at is null`: ein geloeschter Ordner belegt seinen Namen nicht
+-- weiter. Wer "Steuern" wegwirft und spaeter neu anlegt, meint einen neuen
+-- Ordner und soll nicht am Grabstein des alten scheitern.
+create unique index if not exists folders_name_idx
+  on public.folders(owner_id, name) where deleted_at is null;
+
 -- ── Ordner: "Inhalt offline behalten" ─────────────────────────────────────
 -- Dieselbe Zusage wie am Dokument, nur fuer den ganzen Ordner. Bis hierher
 -- stand sie ausschliesslich lokal — auf einem zweiten Geraet waere sie damit
@@ -167,11 +183,54 @@ begin
   end loop;
 end $$;
 
+-- Der Ordner eines Dokuments muss demselben Konto gehoeren.
+--
+-- Die Richtlinie oben prueft nur `owner_id` der Dokumentzeile selbst; `folder_id`
+-- laeuft als Fremdschluessel daran vorbei. Lesen liesse sich ein fremder Ordner
+-- dadurch nie — RLS auf `folders` bleibt wirksam —, aber es entstuende eine
+-- Zeile, die auf etwas Unsichtbares zeigt. Bei einem Projekt mit einem Konto
+-- ist das folgenlos; die Bedingung kostet nichts und schliesst es sauber ab.
+drop policy if exists documents_owner on public.documents;
+create policy documents_owner on public.documents
+  for all
+  using (owner_id = auth.uid())
+  with check (
+    owner_id = auth.uid()
+    and (
+      folder_id is null
+      or exists (
+        select 1 from public.folders f
+         where f.id = folder_id and f.owner_id = auth.uid()
+      )
+    )
+  );
+
 -- ── Storage ───────────────────────────────────────────────────────────────
 -- Bucket "documents", privat. Zugriff nur auf den eigenen Pfad-Praefix.
-insert into storage.buckets (id, name, public)
-values ('documents', 'documents', false)
-on conflict (id) do nothing;
+--
+-- Mit Groessengrenze: ohne sie nimmt der Bucket jede Datei jeder Groesse an.
+-- Ein HTML-Dokument der Bibliothek ist ein paar hundert Kilobyte gross; 10 MB
+-- sind reichlich Luft und zugleich eine Obergrenze fuer den Fall, dass jemand
+-- mit dem Anon Key aus der APK ein Konto anlegt (siehe SETUP.md:
+-- Selbstregistrierung gehoert im Dashboard abgeschaltet). An fremde Daten
+-- kaeme er dadurch nie — die Policies unten binden jeden Zugriff an den
+-- eigenen Pfad-Praefix —, wohl aber an den Speicher des Projekts.
+--
+-- Bewusst OHNE `allowed_mime_types`: beide Upload-Wege senden
+-- "text/html; charset=utf-8", und ob die Pruefung den Parameter hinter dem
+-- Semikolon abschneidet oder auf Gleichheit vergleicht, laesst sich nur am
+-- laufenden Projekt feststellen. Eine Liste, die "text/html" verlangt, koennte
+-- damit jeden Upload abweisen — ein Riegel gegen ein Missbrauchsszenario, der
+-- den Normalbetrieb bricht, ist der schlechtere Tausch. Wer es nachstellen
+-- will, setzt die Liste im Dashboard und laedt einmal hoch.
+--
+-- `do update`, damit ein zweiter Lauf die Grenze auch auf einen Bucket legt,
+-- den es schon gibt. `public` bleibt dabei ausdruecklich `false`.
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('documents', 'documents', false, 10485760)
+on conflict (id) do update
+  set public          = false,
+      file_size_limit = excluded.file_size_limit;
 
 drop policy if exists documents_read   on storage.objects;
 drop policy if exists documents_write  on storage.objects;

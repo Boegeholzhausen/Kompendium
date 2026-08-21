@@ -64,10 +64,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       });
     } catch (error: unknown) {
       // Ein Aussetzer beim Nachsehen ist kein Abgemeldetsein: die Session kann
-      // durchaus da sein. `signed-out` waere hier eine Behauptung — der naechste
-      // Abgleich fragt ohnehin selbst nach.
+      // durchaus da sein. `signed-out` waere hier eine Behauptung — und die
+      // Einstellungen forderten daraufhin zu einer Anmeldung auf, die niemand
+      // braucht. Der Zustand bleibt deshalb `idle` ("noch nicht nachgesehen");
+      // der naechste Abgleich fragt ohnehin selbst nach und setzt dann den
+      // Zustand, der wirklich gilt.
       console.warn('[kompendium] Session liess sich nicht lesen:', error);
-      set({ status: 'signed-out', userId: null, identity: null });
+      set({ status: 'idle', userId: null, identity: null });
     }
   },
 

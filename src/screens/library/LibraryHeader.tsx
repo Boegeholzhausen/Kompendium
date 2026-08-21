@@ -27,7 +27,7 @@
  * faellt sofort auf.
  */
 import React from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import Animated, {
   Extrapolation,
   interpolate,
@@ -37,8 +37,8 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { bg, border, radius, size, space } from '../../theme';
-import { FilterChip } from '../../ui/FilterChip';
-import { Archive, ArrowsDownUp, Circle, Rows, SquaresFour, Star } from '../../ui/icons';
+import { FilterChipRow } from '../../ui/FilterChipRow';
+import { ArrowsDownUp, Rows, SquaresFour } from '../../ui/icons';
 import { IconButton } from '../../ui/IconButton';
 import { NoticeStrip } from '../../ui/NoticeStrip';
 import { Skeleton } from '../../ui/Skeleton';
@@ -235,40 +235,12 @@ export function LibraryHeader({
             ))}
           </View>
         ) : (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.chipRow}
-          keyboardShouldPersistTaps="handled"
-        >
-          <FilterChip
-            label="Alle"
+          <FilterChipRow
+            active={activeFilter}
+            onSelect={onSelectFilter}
             compact={collapsed}
-            active={activeFilter === 'all'}
-            onPress={() => onSelectFilter('all')}
+            contentStyle={styles.chipRow}
           />
-          <FilterChip
-            label="Ungelesen"
-            icon={Circle}
-            compact={collapsed}
-            active={activeFilter === 'unread'}
-            onPress={() => onSelectFilter('unread')}
-          />
-          <FilterChip
-            label="Favoriten"
-            icon={Star}
-            compact={collapsed}
-            active={activeFilter === 'favorites'}
-            onPress={() => onSelectFilter('favorites')}
-          />
-          <FilterChip
-            label="Archiv"
-            icon={Archive}
-            compact={collapsed}
-            active={activeFilter === 'archive'}
-            onPress={() => onSelectFilter('archive')}
-          />
-        </ScrollView>
         )}
       </Animated.View>
       )}

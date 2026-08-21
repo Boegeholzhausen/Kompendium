@@ -25,7 +25,7 @@
  * darunter bleiben unveraendert.
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { FlatList, ScrollView, StyleSheet, View, type ListRenderItemInfo } from 'react-native';
+import { FlatList, StyleSheet, View, type ListRenderItemInfo } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { formatBytes, formatDocumentMeta } from '../../data/format';
@@ -47,7 +47,7 @@ import { ContextMenu, type ContextMenuItem } from '../../ui/ContextMenu';
 import { DocCard } from '../../ui/DocCard';
 import { DocRow } from '../../ui/DocRow';
 import { Fab } from '../../ui/Fab';
-import { FilterChip } from '../../ui/FilterChip';
+import { FilterChipRow } from '../../ui/FilterChipRow';
 import {
   ArrowsDownUp,
   CloudCheck,
@@ -62,7 +62,6 @@ import {
   PencilSimple,
   Rows,
   SquaresFour,
-  Star,
   Trash,
   WarningCircle,
 } from '../../ui/icons';
@@ -306,33 +305,12 @@ export function FolderDetailScreen({ folderName, onBack }: FolderDetailScreenPro
         Dieselbe Filterleiste wie in der Bibliothek, wort- und icon-gleich.
         Ohne `compact`: hier kollabiert kein Kopf, die Chips sind immer 40 hoch.
       */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
+      <FilterChipRow
+        active={filter}
+        onSelect={setFilter}
         style={styles.chips}
-        contentContainerStyle={styles.chipRow}
-      >
-        <FilterChip label="Alle" active={filter === 'all'} onPress={() => setFilter('all')} />
-        <FilterChip
-          label="Ungelesen"
-          icon={Circle}
-          active={filter === 'unread'}
-          onPress={() => setFilter('unread')}
-        />
-        <FilterChip
-          label="Favoriten"
-          icon={Star}
-          active={filter === 'favorites'}
-          onPress={() => setFilter('favorites')}
-        />
-        <FilterChip
-          label="Archiv"
-          icon={Archive}
-          active={filter === 'archive'}
-          onPress={() => setFilter('archive')}
-        />
-      </ScrollView>
+        contentStyle={styles.chipRow}
+      />
 
       {/*
         Die Ueberschrift benennt die geltende Reihenfolge, statt "Zuletzt
@@ -588,6 +566,21 @@ export function FolderDetailScreen({ folderName, onBack }: FolderDetailScreenPro
           color={folder.color}
           count={folderCount}
           hint={`Wirkt auf alle ${folderCount} Dokumente in diesem Ordner`}
+          // Der Name IST der Ausweis (`documents.folder_name`), in der
+          // Datenbank sogar der Primaerschluessel. Ein schon vergebener Name
+          // liesse die Umbenennung dort an der Schluesselverletzung scheitern —
+          // und `persist` traegt den Fehler nur ins Protokoll. Sichtbar waeren
+          // danach zwei gleichnamige Ordner, und nach dem naechsten Start waere
+          // die Umbenennung spurlos weg. Lieber vorher fragen.
+          problemWith={(next) =>
+            folders.some(
+              (entry) =>
+                entry.name !== folder.name &&
+                entry.name.toLowerCase() === next.toLowerCase()
+            )
+              ? `Es gibt schon einen Ordner „${next}“`
+              : null
+          }
           onSubmit={(next) => {
             renameFolder(folder.name, next);
             renameFolderEverywhere(folder.name, next);

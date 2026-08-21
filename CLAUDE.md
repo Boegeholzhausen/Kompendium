@@ -26,9 +26,12 @@ und alle bewussten Abweichungen.
 - **Keine freihändigen Hex-Codes oder Schriftgrößen** außerhalb von
   `src/theme/`. Neue Farb-/Größenwerte gehören dort hinein, nicht inline in
   eine Komponente. Prüfen mit `npm run lint:tokens`.
-- **`src/data/db/repository.ts`** ist die einzige Stelle im Projekt mit SQL.
-  Screens und Zustand-Stores kennen die Datenbank nicht — sie lesen/schreiben
-  über die Stores in `src/state/`.
+- **`src/data/db/`** ist die einzige Stelle im Projekt mit SQL — dort verteilt
+  auf `connection.ts` (öffnen, migrieren) und `repos/*.ts` (je Entität eine
+  Datei). `repository.ts` reicht sie nur nach außen weiter und bleibt die eine
+  Adresse für alle Aufrufer: außerhalb von `src/data/db/` wird nie aus
+  `repos/` importiert. Screens und Zustand-Stores kennen die Datenbank nicht —
+  sie lesen/schreiben über die Stores in `src/state/`.
 - Bei Schemaänderungen (`src/data/db/schema.ts`): `SCHEMA_VERSION` hochzählen
   und eine Migration in `migrations` ergänzen (`CREATE TABLE IF NOT EXISTS`
   ändert keine vorhandene Tabelle — neue Spalten brauchen `ALTER TABLE` in

@@ -124,7 +124,8 @@ src/ui/               Basiskomponenten, Kachel und Icon-Register
 src/screens/          Screens; jeder in einem eigenen Ordner
 src/state/            Zustand, der Screens überdauert (zustand)
 src/data/             Typen, Formate, Suchlauf, Import, Dateicache
-src/data/db/          Schema und Repository — die einzige Stelle mit SQL
+src/data/db/          Schema, Verbindung und repos/ — die einzige Stelle mit SQL
+src/data/db/repository.ts  reicht repos/ nach außen; die eine Adresse für alle
 scripts/lint-tokens   Prüft: keine freihändigen Farb- oder Schriftwerte
 scripts/shots.mjs     Screenshots des Viewer-Kernflows
 scripts/shots6.mjs    Screenshots der Ordner-/Such-/Import-Screens
@@ -313,24 +314,64 @@ beim Laden nichts weiß aufblitzt.
 - **Externe Links im Dokument** öffnen `http`/`https` im Systembrowser
   (`expo-linking`), statt sie wie bisher stumm zu blocken. `about:` (samt
   Ankern für ein eigenes Inhaltsverzeichnis) läuft weiter in der WebView, alles
-  andere bleibt geblockt.
+  andere bleibt geblockt. **Nur nach einem Fingertipp:** die Rückfrage der
+  WebView unterscheidet nicht zwischen einem angetippten Link und einem
+  `location.href` aus dem Skript des Dokuments. Ohne diese Bedingung öffnete
+  ein Dokument ungefragt den Browser, mit einer Adresse, die seinen Inhalt als
+  Parameter tragen kann. Als Tipp zählt eine Berührung in den zwei Sekunden
+  davor — genauer geht es nicht, `react-native-webview` reicht unter Android
+  kein `isUserGesture` durch. Was geblockt wird, sagt ein Toast.
+- **Das Dokument bekommt eine Inhaltsrichtlinie** (`Content-Security-Policy`
+  als `<meta>` im Kopf). Sein eigenes JavaScript läuft weiter — Rechner,
+  Diagramme und Klapplisten sind der Sinn der App —, aber `fetch`,
+  nachgeladene Skripte und fremde Bilder fallen weg. Ohne sie könnte ein
+  Dokument seinen Inhalt an einen beliebigen Server schicken; bei „Von URL
+  laden" ist das fremdes HTML aus dem Netz und damit genau die Frage. Die
+  Richtlinie geht hinter das `<head>`-Tag und nie vor den Doctype — der muss
+  als Erstes stehen, sonst schaltet der Browser in den Quirks-Modus und stellt
+  das Dokument anders dar. Ein Dokument, das seine Bibliothek per
+  `<script src="https://…">` nachlädt, funktioniert danach nicht mehr; es hätte
+  offline ohnehin nie funktioniert.
 - **Der Papierkorb räumt beim Start auf:** alles, was länger als 30 Tage darin
   liegt, wird endgültig gelöscht — Datenbankzeile und Cache-Datei. Ohne den
   Lauf stünden Zeilen dauerhaft auf "0 Tage übrig" und widersprächen dem
-  Hinweisstreifen aus Blatt `6a`.
+  Hinweisstreifen aus Blatt `6a`. Seit Schema 8 hinterlässt das Löschen einen
+  **Grabstein** (`document_deletions`), damit die Zeile auch oben verschwindet
+  und ihre Datei aus dem Bucket geht — der Outbox-Eintrag kann das nicht
+  leisten, er hängt per Cascade an der Zeile und geht mit ihr.
+- **„Cache leeren" verschont, was nur lokal existiert.** Neben den Dokumenten
+  mit „Offline behalten" bleibt alles stehen, was noch nie oben war
+  (`storage_path IS NULL`): für ein am Handy importiertes Dokument ist die
+  Datei im Cache keine Kopie, sondern die einzige Fassung. Sie zu löschen
+  hieße, das Dokument zu vernichten — und die Zeile fiele danach aus beiden
+  Rettungswegen, weil `needsDownload` ohne `storage_path` verneint und
+  `readUploadable` einen `cache_key` verlangt.
+- **Ein Ordner lässt sich nicht auf einen vergebenen Namen umbenennen.** Der
+  Name ist der Ausweis und in SQLite der Primärschlüssel; ein vergebener Name
+  ließe die Umbenennung dort an der Schlüsselverletzung scheitern, während der
+  Zustand sie längst vollzogen hätte. Das Sheet fragt deshalb vorher und sperrt
+  „Speichern" mit einem Satz in der Hinweiszeile.
 - **Der Suchverlauf startet leer.** Blatt `3c` zeigt "annuität",
   "kündigungsfrist" und "cloud" unter "Zuletzt gesucht" — das ist eine
   Beschriftung der Zeichnung, keine Nutzung. Eine App, die beim ersten Start
   eine Suchvergangenheit behauptet, die es nicht gibt, macht eine
   Falschaussage. Ergänzt ist deshalb ein "Verlauf leeren" unter der Chip-Reihe:
   ein Verlauf, den man nicht loswird, gehört dem Nutzer nicht.
-- **Leseposition und Suchverlauf überdauern den Neustart.** Beide liegen als
-  JSON in der vorhandenen `settings`-Tabelle — kein Schemawechsel. Die
-  Leseposition wird beim Lesen gedrosselt geschrieben (frühestens alle zwei
-  Sekunden) und in jedem Fall beim Verlassen des Viewers: der Scroll-Rückruf
-  feuert ab 8 px Unterschied, eine Datenbankschreibung je Schritt wäre beim
-  Lesen spürbar. Einträge zu Dokumenten, die es nicht mehr gibt, fallen beim
-  Start und beim endgültigen Löschen weg.
+- **Leseposition und Suchverlauf überdauern den Neustart.** Der Suchverlauf
+  liegt als JSON in der `settings`-Tabelle; die Leseposition stand dort
+  anfangs auch, steht seit Schema-Version 7 aber als Spalte in der
+  Dokumentzeile (`documents.scroll_offset`). Der Grund ist der Abgleich: als
+  Spalte geht sie über die vorhandene Outbox mit, und auf dem zweiten Gerät
+  steht der Text dann dort, wo man aufgehört hat — als Voreinstellung hätte sie
+  nie einen Weg nach oben gefunden, weil sie kein Wert über den Nutzer ist,
+  sondern über einen Text. Geschrieben wird sie an genau zwei Momenten: beim
+  Verlassen des Viewers und beim Wechsel in den Hintergrund. Die frühere
+  Zwei-Sekunden-Drossel ist damit entfallen — jede Schreibung reiht das
+  Dokument in die Outbox ein, und beim Lesen eines langen Textes spränge der
+  Sync-Status sonst dauernd zwischen „Synchron" und „Änderungen offen". Der
+  Scroll-Rückruf feuert weiter ab 8 px Unterschied; eine Datenbankschreibung je
+  Schritt wäre beim Lesen spürbar. Einträge zu Dokumenten, die es nicht mehr
+  gibt, fallen beim Start und beim endgültigen Löschen weg.
 - **Die Filter-Chips der Bibliothek sind vier feste Werte** — Alle ·
   Ungelesen · Favoriten · Archiv. Blatt `1c` zeigt dort zwei Tag-Chips; mit
   dem Wegfall der Tags tritt der Workflow-Status an ihre Stelle. Die Leiste

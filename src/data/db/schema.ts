@@ -8,11 +8,12 @@
  *
  * Drei Tabellen und zwei Schluessel-Wert-Paare:
  *
- *   documents        eine Zeile je Dokument, mit allem, was ein Screen zeigt
- *   folders          Name (zugleich Ausweis), Farbe, "Inhalt offline behalten"
- *   outbox           was lokal geaendert wurde und noch nach oben muss
- *   folder_deletions Grabsteine geloeschter Ordner (siehe unten)
- *   settings         Darstellung und Bibliothek-Voreinstellungen
+ *   documents          eine Zeile je Dokument, mit allem, was ein Screen zeigt
+ *   folders            Name (zugleich Ausweis), Farbe, "Inhalt offline behalten"
+ *   outbox             was lokal geaendert wurde und noch nach oben muss
+ *   folder_deletions   Grabsteine geloeschter Ordner (siehe unten)
+ *   document_deletions Grabsteine endgueltig geloeschter Dokumente
+ *   settings           Darstellung und Bibliothek-Voreinstellungen
  *
  * Der Workflow-Status (`read_at`, `archived_at`) steht als Spalte in der
  * Dokumentzeile und nicht als Zuordnung wie frueher die Tags: "gelesen" ist
@@ -37,7 +38,7 @@
  * Bei Aenderungen am Schema hochzaehlen. `user_version` steht in der Datei
  * selbst — daran erkennt der naechste Start, ob eine Migration faellig ist.
  */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 export const DATABASE_NAME = 'kompendium.db';
 
@@ -115,6 +116,37 @@ CREATE TABLE IF NOT EXISTS outbox (
 CREATE TABLE IF NOT EXISTS folder_deletions (
   remote_id TEXT PRIMARY KEY NOT NULL,
   queued_at INTEGER NOT NULL
+);
+
+-- Grabsteine endgueltig geloeschter Dokumente — dieselbe Ueberlegung wie eine
+-- Zeile darueber, nur fuer die andere Tabelle.
+--
+-- Die Outbox kann das nicht leisten: ihr Eintrag haengt per ON DELETE CASCADE
+-- an der Dokumentzeile und geht mit ihr, genau im Moment des Loeschens. Ohne
+-- Grabstein bliebe die Zeile oben fuer immer stehen (und ihre Datei mit ihr),
+-- selbst wenn der Papierkorb-Vermerk nie hochkam — etwa wenn offline
+-- weggeworfen und die 30-Tage-Frist offline abgelaufen ist.
+--
+-- Der Ablageort steht mit drin, weil er sich nach dem Loeschen nirgends mehr
+-- ablesen laesst: die Datei im Bucket muss mitgeloescht werden, sonst waechst
+-- er monoton (nichts im Projekt raeumt ihn sonst auf).
+--
+-- Die Spalte pushed_at macht daraus zwei Dinge in einer Tabelle, mit Absicht:
+--
+--   NULL           noch abzuarbeiten — der naechste Push setzt oben
+--                  deleted_at und raeumt die Datei weg
+--   ein Zeitpunkt  erledigt, aber die Zeile BLEIBT als Sperrliste stehen
+--
+-- Ohne das Bleiben kaeme das Dokument sofort zurueck: der Push setzt oben
+-- deleted_at, der Trigger schreibt updated_at fort, und der Abruf im selben
+-- Lauf legte die Zeile lokal als Papierkorb-Eintrag wieder an — ein Dokument,
+-- das der Nutzer gerade endgueltig weggeworfen hat. applyRemote schlaegt
+-- deshalb hier nach, bevor es eine Zeile anlegt.
+CREATE TABLE IF NOT EXISTS document_deletions (
+  document_id  TEXT PRIMARY KEY NOT NULL,
+  storage_path TEXT NOT NULL,
+  queued_at    INTEGER NOT NULL,
+  pushed_at    INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -208,4 +240,18 @@ export const migrations: { to: number; sql: string }[] = [
   // (`sync_state`-Schluessel `scroll_moved`). Der Vorgabewert 0 ist richtig:
   // ein Dokument ohne gemerkte Stelle faengt oben an.
   { to: 7, sql: 'ALTER TABLE documents ADD COLUMN scroll_offset INTEGER NOT NULL DEFAULT 0' },
+  // Version 8: Grabsteine fuer endgueltig geloeschte Dokumente. Vorhandene
+  // Installationen fangen mit einer leeren Tabelle an — was vor diesem Umbau
+  // geloescht wurde, steht oben noch, und das nachtraeglich zu erraten ginge
+  // nur ueber einen Vollabgleich gegen den Server. Dieselbe Zurueckhaltung wie
+  // bei `read_at` in Version 4: lieber nichts behaupten.
+  {
+    to: 8,
+    sql: `CREATE TABLE IF NOT EXISTS document_deletions (
+      document_id  TEXT PRIMARY KEY NOT NULL,
+      storage_path TEXT NOT NULL,
+      queued_at    INTEGER NOT NULL,
+      pushed_at    INTEGER
+    )`,
+  },
 ];

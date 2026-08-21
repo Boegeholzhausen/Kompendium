@@ -126,7 +126,7 @@ Spalte.
 
 ## Lokal — expo-sqlite (`src/data/db/schema.ts`)
 
-`SCHEMA_VERSION = 7`, Datenbankname `kompendium.db`. Sechs Tabellen:
+`SCHEMA_VERSION = 8`, Datenbankname `kompendium.db`. Sieben Tabellen:
 
 | Tabelle | Zweck |
 |---|---|
@@ -134,6 +134,7 @@ Spalte.
 | `folders` | Name (zugleich Ausweis, PK), Farbe, „Inhalt offline behalten", `remote_id` |
 | `outbox` | was lokal geändert wurde und noch nach oben muss |
 | `folder_deletions` | Grabsteine gelöschter Ordner (`remote_id`, `queued_at`) |
+| `document_deletions` | Grabsteine endgültig gelöschter Dokumente (`document_id`, `storage_path`, `queued_at`, `pushed_at`) |
 | `settings` | Schlüssel-Wert-Paar für Darstellung und Bibliothek-Voreinstellungen |
 | `sync_state` | Buchhaltung des Abgleichs (siehe unten) |
 
@@ -155,6 +156,21 @@ Vergleich des ganzen Bestands mit oben der einfachere richtige Weg
 (`readFoldersForPush`). Genau ein Fall entzieht sich dem Vergleich — eine
 gelöschte Zeile hinterlässt lokal nichts, was er noch finden könnte. Dafür gibt
 es `folder_deletions`.
+
+**Warum Dokumente trotz Outbox einen Grabstein brauchen:** ihr Outbox-Eintrag
+hängt per `ON DELETE CASCADE` an der Dokumentzeile und geht im Moment des
+Löschens mit ihr — er ist die eine Buchhaltung, die ein Löschen nicht
+überleben kann. Ohne `document_deletions` bliebe die Zeile oben deshalb für
+immer stehen, und ihre Datei mit ihr; nichts sonst im Projekt räumt den Bucket
+je auf. Betroffen ist nur, was schon oben war (`storage_path IS NOT NULL`).
+
+`document_deletions.pushed_at` macht die Tabelle zu zwei Dingen in einem:
+`NULL` heißt „noch abzuarbeiten", ein Zeitpunkt heißt „erledigt, Zeile bleibt
+als **Sperrliste** stehen". Das Bleiben ist nötig, sonst käme das Dokument
+sofort zurück — der Push setzt oben `deleted_at`, der Trigger schreibt
+`updated_at` fort, und der Abruf im selben Lauf legte die Zeile wieder an, als
+Papierkorb-Eintrag für ein Dokument, das der Nutzer gerade endgültig
+weggeworfen hat. `applyRemote` schlägt deshalb vor jeder Neuanlage dort nach.
 
 `read_at` und `archived_at` sind zwei Spalten und nicht eine Status-Spalte
 mit drei Werten: Archiv ist eine zweite Achse neben gelesen/ungelesen — ein
@@ -191,7 +207,18 @@ schlechter als keins. Version 3: `storage_path`, `content_hash`,
 steht auf `ON`. Bestehende Zeilen starten mit `read_at = NULL`, sind also
 ungelesen: was vor dem Umbau gelesen wurde, weiß niemand mehr, und "alles
 gelesen" wäre eine Behauptung. Version 5: `folder_deletions`. Version 7:
-`documents.scroll_offset`.
+`documents.scroll_offset`. Version 8: `document_deletions` — vorhandene
+Installationen fangen mit einer leeren Tabelle an, denn was vor diesem Umbau
+gelöscht wurde, ließe sich nur über einen Vollabgleich gegen den Server
+erraten.
+
+**Migrationen laufen je Zielversion in einer Transaktion**, und
+`PRAGMA user_version` wird darin mitgesetzt: entweder alle Befehle einer Stufe
+und die neue Nummer, oder nichts davon. Vorher wurde die Nummer erst ganz am
+Ende gesetzt — brach eine Stufe mittendrin ab, wiederholte der nächste Start
+sie, und `ALTER TABLE ADD COLUMN` scheiterte dauerhaft an „duplicate column
+name". Zusätzlich überspringt `alreadyApplied` einen `ADD COLUMN`-Schritt,
+dessen Spalte laut `PRAGMA table_info` schon steht.
 
 **Zwei Datenwanderungen stehen bewusst NICHT in `migrations`** — dort steht
 ausschließlich SQL, und beide müssen Zeile für Zeile rechnen. Sie liegen im
@@ -263,7 +290,7 @@ Zeilen per `INSERT OR REPLACE` in SQLite schreiben, `last_pulled_at` auf das
 größte empfangene `updated_at` setzen. Löschungen brauchen keinen
 Sonderweg, weil Soft Delete `updated_at` mitsetzt.
 
-**Push (App → Supabase), vier Schritte in fester Reihenfolge:**
+**Push (App → Supabase), fünf Schritte in fester Reihenfolge:**
 
 1. **Ordner** (`pushFolders`). Grabsteine zuerst, dann der Bestand: Ordner mit
    `remote_id` werden fortgeschrieben, Ordner ohne einen erst über den Namen
@@ -276,12 +303,21 @@ Sonderweg, weil Soft Delete `updated_at` mitsetzt.
    Datei im Cache und `source != 'sample'`: HTML lesen, sha256 bilden, Datei
    nach `<owner_id>/<uuid>.html` legen, Zeile einfügen, `markUploaded`. Ab dann
    läuft das Dokument den normalen Outbox-Weg.
-3. **Geänderte Felder** — die Outbox (unten).
-4. **Voreinstellungen** (`pushSettings`) in `user_settings`.
+3. **Endgültig gelöschte Dokumente** (`pushDocumentDeletions`). Je Grabstein:
+   oben `deleted_at` setzen, damit ein zweites Gerät die Löschung durch
+   dasselbe Wasserzeichen erfährt, und die Datei aus dem Bucket nehmen. Die
+   Zeile wird **nicht** hart gelöscht — ein hartes Löschen trägt kein
+   `updated_at` und käme bei keinem Abruf mit. Abgehakt wird nur, was ganz
+   durchkam.
+4. **Geänderte Felder** — die Outbox (unten).
+5. **Voreinstellungen** (`pushSettings`) in `user_settings`.
 
 Die Reihenfolge hängt fest: ein Dokument in einem Ordner kann nur hochgehen,
 wenn der Ordner oben eine Zeile hat, und ein `update` auf eine Zeile, die es
-oben nicht gibt, trifft nichts und meldet trotzdem Erfolg.
+oben nicht gibt, trifft nichts und meldet trotzdem Erfolg. Genau deshalb hängt
+die Feldschleife ein `select('id')` an und wertet die Trefferzahl aus: ohne sie
+räumte `clearOutbox` einen Eintrag ab, von dem oben nichts ankam — die Änderung
+wäre weg und der Status stünde auf „Synchron".
 
 Wechselt die Identität (E-Mail-Anmeldung, Abmelden), verliert der Abgleich
 zuerst seine Merkposten (`noteOwner`): Wasserzeichen, `folders.remote_id` und

@@ -40,6 +40,18 @@ interface SyncState {
   sync: () => Promise<void>;
 }
 
+/**
+ * Der Lauf, der gerade unterwegs ist — oder `null`.
+ *
+ * Der Statuswaechter in `sync()` allein reicht nicht: zwischen der Frage
+ * `status === 'syncing'` und dem Setzen liegen zwei `await` (Anmeldung
+ * nachsehen, Netz pruefen). Zwei Aufrufe, die in diese Luecke fallen, liefen
+ * beide durch — und `uploadNewDocuments` laedt dann dieselbe Datei zweimal
+ * hoch. Dasselbe Mittel wie in `hydrate.ts`: der zweite Aufrufer bekommt das
+ * Versprechen des ersten und wartet darauf.
+ */
+let running: Promise<void> | null = null;
+
 export const useSyncStore = create<SyncState>((set, get) => ({
   // Bis `hydrateStores()` die Outbox gezaehlt hat, ist `pending` die
   // vorsichtige Annahme: lieber einmal zu viel "Änderungen offen" zeigen als
@@ -51,67 +63,78 @@ export const useSyncStore = create<SyncState>((set, get) => ({
   setStatus: (status) => set({ status }),
 
   sync: async () => {
-    if (get().status === 'syncing') return;
-
-    // Ohne Zugangsdaten laeuft die App rein lokal. Dann gibt es nichts
-    // abzugleichen, und "Sync fehlgeschlagen" waere eine Falschaussage ueber
-    // etwas, das gar nicht versucht wurde.
-    if (!isSupabaseConfigured) {
-      set({ status: 'idle', lastError: null });
-      return;
-    }
-
-    // Niemand angemeldet: nichts abzugleichen, aber auch nichts kaputt. Die
-    // Bibliothek laeuft vollstaendig aus der lokalen Datenbank; `error` waere
-    // eine Falschaussage ueber einen Zustand, den der Nutzer gewaehlt hat.
-    // Gesagt wird es dort, wo man etwas tun kann — Einstellungen, "Konto".
-    if ((await currentUserId()) === null) {
-      set({ status: 'signed-out', lastError: null });
-      return;
-    }
-
-    // Ohne Netz gibt es nichts abzugleichen. Das ist der eine Weg in den
-    // Zustand `error`, der keinen Serverfehler braucht (Blatt `4c`).
-    if (!useNetworkStore.getState().isOnline) {
-      set({ status: 'error', lastError: 'Keine Verbindung.' });
-      return;
-    }
-
-    set({ status: 'syncing', lastError: null });
-
-    try {
-      // Erst die eigene Wahrheit hoch, dann lesen. Der Abruf achtet auf offene
-      // Outbox-Eintraege (`applyRemote`), aber eine Zeile, die schon oben
-      // steht, kommt sauber zurueck statt geschuetzt zu werden.
-      await pushChanges();
-      const result = await pullChanges();
-      // Nur neu einlesen, wenn sich wirklich etwas geaendert hat: ein Abruf
-      // ohne Ergebnis soll keine Liste neu aufbauen, durch die der Nutzer
-      // gerade scrollt.
-      if (result.changed > 0) {
-        // Bewusst erst hier geladen und nicht oben importiert: `hydrate.ts`
-        // braucht `useSyncStore` (Anfangsstatus), und ein statischer Import
-        // zurueck machte daraus einen Modulzyklus. Beim Start waere
-        // `reloadStores` dann kurzzeitig `undefined` — Metro warnt davor.
-        // Zur Aufrufzeit ist `hydrate.ts` laengst fertig ausgewertet.
-        const { reloadStores } = await import('./hydrate');
-        await reloadStores();
-      }
-      // Blieb etwas liegen — ein Ordner, den es oben noch nicht gibt —, ist
-      // `pending` die richtige Auskunft und nicht `idle`.
-      const open = await countOutbox();
-      set({
-        status: open === 0 ? 'idle' : 'pending',
-        lastSyncedAt: Date.now(),
-        lastError: null,
-      });
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.warn('[kompendium] Abgleich fehlgeschlagen:', message);
-      set({ status: 'error', lastError: message });
-    }
+    if (running !== null) return running;
+    running = runSync(set).finally(() => {
+      running = null;
+    });
+    return running;
   },
 }));
+
+/**
+ * Der Abgleich selbst. Er steht neben dem Zustand und nicht darin, damit der
+ * Waechter oben ihn genau einmal starten kann — die Zustandsfunktion ist ab
+ * jetzt nur noch die Schleuse.
+ */
+async function runSync(set: (partial: Partial<SyncState>) => void): Promise<void> {
+  // Ohne Zugangsdaten laeuft die App rein lokal. Dann gibt es nichts
+  // abzugleichen, und "Sync fehlgeschlagen" waere eine Falschaussage ueber
+  // etwas, das gar nicht versucht wurde.
+  if (!isSupabaseConfigured) {
+    set({ status: 'idle', lastError: null });
+    return;
+  }
+
+  // Niemand angemeldet: nichts abzugleichen, aber auch nichts kaputt. Die
+  // Bibliothek laeuft vollstaendig aus der lokalen Datenbank; `error` waere
+  // eine Falschaussage ueber einen Zustand, den der Nutzer gewaehlt hat.
+  // Gesagt wird es dort, wo man etwas tun kann — Einstellungen, "Konto".
+  if ((await currentUserId()) === null) {
+    set({ status: 'signed-out', lastError: null });
+    return;
+  }
+
+  // Ohne Netz gibt es nichts abzugleichen. Das ist der eine Weg in den
+  // Zustand `error`, der keinen Serverfehler braucht (Blatt `4c`).
+  if (!useNetworkStore.getState().isOnline) {
+    set({ status: 'error', lastError: 'Keine Verbindung.' });
+    return;
+  }
+
+  set({ status: 'syncing', lastError: null });
+
+  try {
+    // Erst die eigene Wahrheit hoch, dann lesen. Der Abruf achtet auf offene
+    // Outbox-Eintraege (`applyRemote`), aber eine Zeile, die schon oben
+    // steht, kommt sauber zurueck statt geschuetzt zu werden.
+    await pushChanges();
+    const result = await pullChanges();
+    // Nur neu einlesen, wenn sich wirklich etwas geaendert hat: ein Abruf
+    // ohne Ergebnis soll keine Liste neu aufbauen, durch die der Nutzer
+    // gerade scrollt.
+    if (result.changed > 0) {
+      // Bewusst erst hier geladen und nicht oben importiert: `hydrate.ts`
+      // braucht `useSyncStore` (Anfangsstatus), und ein statischer Import
+      // zurueck machte daraus einen Modulzyklus. Beim Start waere
+      // `reloadStores` dann kurzzeitig `undefined` — Metro warnt davor.
+      // Zur Aufrufzeit ist `hydrate.ts` laengst fertig ausgewertet.
+      const { reloadStores } = await import('./hydrate');
+      await reloadStores();
+    }
+    // Blieb etwas liegen — ein Ordner, den es oben noch nicht gibt —, ist
+    // `pending` die richtige Auskunft und nicht `idle`.
+    const open = await countOutbox();
+    set({
+      status: open === 0 ? 'idle' : 'pending',
+      lastSyncedAt: Date.now(),
+      lastError: null,
+    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn('[kompendium] Abgleich fehlgeschlagen:', message);
+    set({ status: 'error', lastError: message });
+  }
+}
 
 /** Die Statuszeile in den Einstellungen — Wort und Zeitpunkt. */
 export const syncLabels: Record<SyncStatus, string> = {

@@ -153,10 +153,23 @@ export function SettingsScreen() {
    * "Offline behalten" bleiben. Die Zeilen selbst bleiben in allen Listen
    * stehen und sind nur nicht mehr zu oeffnen, genau wie jedes nicht geladene
    * Dokument (Blatt `4c`).
+   *
+   * Verschont wird zusaetzlich alles, was noch NIE oben war
+   * (`storagePath === null`) — dieselbe Bedingung wie in `readUploadable`.
+   * Fuer ein am Handy importiertes Dokument ist die Datei im Cache naemlich
+   * nicht eine Kopie, sondern die einzige Fassung: sie zu loeschen hiesse, das
+   * Dokument zu vernichten. Danach fiele die Zeile sogar aus beiden
+   * Rettungswegen — `needsDownload` verneint ohne `storagePath`, und
+   * `readUploadable` verlangt einen `cacheKey`. "Cache leeren" darf wegnehmen,
+   * was sich wiederholen laesst, und nichts darueber hinaus.
    */
   const emptyCache = async () => {
     const keep = documents
-      .filter((document) => document.keepOffline && document.cacheKey !== null)
+      .filter(
+        (document) =>
+          document.cacheKey !== null &&
+          (document.keepOffline || document.storagePath === null)
+      )
       .map((document) => document.cacheKey as string);
 
     const dropped = await clearCache(keep);
@@ -205,13 +218,26 @@ export function SettingsScreen() {
 
         {isSupabaseConfigured ? (
           <SettingsGroup title="Konto" style={styles.group}>
-            {/* Wort UND Symbol, wie in der Statuszeile darueber. */}
+            {/*
+              Wort UND Symbol, wie in der Statuszeile darueber.
+
+              Drei Zustaende und nicht zwei: `idle` heisst "noch nicht
+              nachgesehen" — beim Start fuer einen Augenblick, und laenger, wenn
+              das Nachsehen ausgesetzt hat (`state/session.ts`). "Nicht
+              angemeldet" waere dann eine Behauptung ueber etwas, das niemand
+              geprueft hat, samt Aufforderung zu einer Anmeldung, die
+              moeglicherweise gar nicht fehlt.
+            */}
             <SettingsRow
-              label={identity?.email ?? 'Nicht angemeldet'}
+              label={
+                identity?.email ?? (sessionStatus === 'idle' ? 'Konto' : 'Nicht angemeldet')
+              }
               note={
                 identity !== null
                   ? 'angemeldet · jedes Gerät sieht denselben Bestand'
-                  : 'die Bibliothek läuft weiter, nur der Abgleich ruht'
+                  : sessionStatus === 'idle'
+                    ? 'wird geprüft …'
+                    : 'die Bibliothek läuft weiter, nur der Abgleich ruht'
               }
               icon={identity !== null ? EnvelopeSimple : UserCircleDashed}
               iconColor={identity !== null ? accent.base : textColor.secondary}

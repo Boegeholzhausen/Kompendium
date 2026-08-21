@@ -68,7 +68,7 @@ import { readDocument } from './cache';
 import { plainText } from './plainText';
 import type { StoredDocument } from './library';
 import { sampleDocumentText } from './sampleDocumentHtml';
-import { periodDays, type SearchFilters } from '../state/search';
+import { periodDays, type SearchFilters } from './searchFilters';
 
 /** Eine hervorzuhebende Stelle: Anfang und Laenge im jeweiligen Text. */
 export interface Highlight {
@@ -137,7 +137,34 @@ export function normalize(value: string): string {
 }
 
 const textCache = new Map<string, string>();
+
+/**
+ * Die gefalteten Fassungen — anders als der Klartext mit fester Obergrenze.
+ *
+ * Ein `Folded` traegt neben dem Text ein `map` mit EINEM Zahlenwert je
+ * Zeichen. Bei einem Nachschlagewerk mit ein paar hunderttausend Zeichen ist
+ * das der mit Abstand groesste Posten der App, und `warmSearchIndex` liest
+ * beim Start jede vorhandene Datei ein. Unbegrenzt gehalten waere das bei den
+ * 50–500 Dokumenten des Zielbilds ein Speicherverbrauch, der mit dem Bestand
+ * waechst und nie wieder faellt.
+ *
+ * Die Faltung selbst ist billig — ein Durchlauf ueber den Text. Gepuffert wird
+ * sie nur, damit nicht bei JEDEM Tastendruck der ganze Bestand neu gefaltet
+ * wird; dafuer reichen die zuletzt benutzten. Aeltestes fliegt zuerst
+ * (`Map` haelt die Einfuegereihenfolge, ein erneuter Treffer wird ans Ende
+ * gesetzt).
+ */
+const FOLDED_LIMIT = 40;
 const foldedCache = new Map<string, Folded>();
+
+function rememberFolded(documentId: string, folded: Folded): void {
+  foldedCache.set(documentId, folded);
+  while (foldedCache.size > FOLDED_LIMIT) {
+    const oldest = foldedCache.keys().next();
+    if (oldest.done === true) break;
+    foldedCache.delete(oldest.value);
+  }
+}
 
 /** Text eines importierten Dokuments ablegen — beim Import und beim Warmlauf. */
 export function indexDocumentText(documentId: string, html: string): void {
@@ -204,9 +231,15 @@ function textOf(document: StoredDocument): string {
 /** Gefaltete Fassung des Volltextes — einmal je Dokument, dann gepuffert. */
 function foldedTextOf(document: StoredDocument): Folded {
   const cached = foldedCache.get(document.id);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined) {
+    // Wieder benutzt heisst wieder jung: ohne dieses Umsetzen fiele bei einer
+    // Suche ueber viele Dokumente ausgerechnet das gerade Gelesene heraus.
+    foldedCache.delete(document.id);
+    foldedCache.set(document.id, cached);
+    return cached;
+  }
   const folded = fold(textOf(document));
-  foldedCache.set(document.id, folded);
+  rememberFolded(document.id, folded);
   return folded;
 }
 

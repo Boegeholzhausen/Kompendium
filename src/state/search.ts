@@ -21,26 +21,18 @@ import { create } from 'zustand';
 
 import { persist } from '../data/db/persist';
 import { setSetting } from '../data/db/repository';
+// Die Filterdefinition selbst liegt in `data/` — hier stehen nur die gerade
+// gewaehlten Werte. Weitergereicht, damit die Screens sie wie bisher aus
+// diesem Modul beziehen koennen.
+import {
+  periodDays,
+  periodLabels,
+  type PeriodKey,
+  type SearchFilters,
+} from '../data/searchFilters';
 
-/** Zeitraum-Filter des Dropdown-Chips (Blatt `3d`). */
-export type PeriodKey = 'week' | 'month' | 'year';
-
-export const periodLabels: Record<PeriodKey, string> = {
-  week: 'Letzte 7 Tage',
-  month: 'Letzte 30 Tage',
-  year: 'Letztes Jahr',
-};
-
-export const periodDays: Record<PeriodKey, number> = {
-  week: 7,
-  month: 30,
-  year: 365,
-};
-
-export interface SearchFilters {
-  folderName: string | null;
-  period: PeriodKey | null;
-}
+export { periodDays, periodLabels };
+export type { PeriodKey, SearchFilters };
 
 const noFilters: SearchFilters = { folderName: null, period: null };
 
