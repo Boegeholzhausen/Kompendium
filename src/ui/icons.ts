@@ -63,5 +63,9 @@ export { TrayIcon as Tray } from 'phosphor-react-native/src/icons/Tray';
 export { TextAaIcon as TextAa } from 'phosphor-react-native/src/icons/TextAa';
 export { MoonIcon as Moon } from 'phosphor-react-native/src/icons/Moon';
 export { CalendarBlankIcon as CalendarBlank } from 'phosphor-react-native/src/icons/CalendarBlank';
+// Konto: verknuepft (Umschlag) und nicht verknuepft (Kreis mit gestricheltem
+// Rand — dieselbe Aussage wie das Wort daneben, ohne dass die Farbe sie traegt).
+export { EnvelopeSimpleIcon as EnvelopeSimple } from 'phosphor-react-native/src/icons/EnvelopeSimple';
+export { UserCircleDashedIcon as UserCircleDashed } from 'phosphor-react-native/src/icons/UserCircleDashed';
 
 export type { Icon, IconProps, IconWeight } from 'phosphor-react-native';

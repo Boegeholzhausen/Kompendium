@@ -60,6 +60,10 @@ export async function loadSnapshot(): Promise<Snapshot> {
     documents: [...documents.values()].map((document) => ({ ...document })),
     folders: folders.map((folder) => ({ ...folder })),
     settings: { ...settings },
+    // Im Web-Bild faengt jedes Dokument oben an: der Bestand kommt bei jedem
+    // Seitenaufruf frisch aus `sampleLibrary`, eine gemerkte Stelle gaebe es
+    // also nur innerhalb einer Sitzung.
+    scrollPositions: {},
   };
 }
 
@@ -111,6 +115,9 @@ export async function deleteFolder(name: string): Promise<void> {
   }
 }
 
+/** Siehe die native Fassung — `state/viewer.ts` holt den Schluessel von hier. */
+export const SETTING_SCROLL_POSITIONS = 'viewer.scrollPositions';
+
 export async function setSetting(key: string, value: string): Promise<void> {
   settings[key] = value;
 }
@@ -122,5 +129,20 @@ export async function setSetting(key: string, value: string): Promise<void> {
  * ehrlicher als "Änderungen offen" fuer einen Weg, den es hier nicht gibt.
  */
 export async function countOutbox(): Promise<number> {
+  return 0;
+}
+
+/**
+ * Die ID-Wanderung aus Paket B gibt es im Web-Bild nicht: der Bestand hier
+ * kommt bei jedem Seitenaufruf frisch aus `sampleLibrary` und ueberlebt keinen
+ * Neustart — es gibt also nie eine alte Kennung, die zu wandern haette.
+ * `state/hydrate.ts` ruft die Funktion trotzdem, deshalb steht sie hier.
+ */
+export async function migrateLocalIdsToUuid(): Promise<number> {
+  return 0;
+}
+
+/** Dasselbe fuer die Uebernahme der Lesepositionen aus Paket D. */
+export async function adoptScrollPositions(): Promise<number> {
   return 0;
 }

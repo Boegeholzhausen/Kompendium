@@ -15,10 +15,20 @@
  * Faellt die Anmeldung aus, laeuft die App weiter: die lokale Datenbank ist
  * die Wahrheitsquelle, Supabase ist der Abgleich. `status` sagt, woran es
  * liegt, statt es zu verschweigen.
+ *
+ * Seit Paket C ist die anonyme Identitaet nur noch der Anfang: sie laesst sich
+ * mit einer E-Mail verknuepfen, und erst dann kann ein zweites Geraet
+ * denselben Bestand sehen. `identity` haelt fest, in welchem der beiden
+ * Zustaende die App gerade ist — die Einstellungen zeigen genau das.
  */
 import { create } from 'zustand';
 
-import { ensureSession, isSupabaseConfigured } from '../data/supabase';
+import {
+  currentIdentity,
+  ensureSession,
+  isSupabaseConfigured,
+  type Identity,
+} from '../data/supabase';
 
 export type SessionStatus =
   /** Noch nicht versucht. */
@@ -35,12 +45,34 @@ export type SessionStatus =
 interface SessionState {
   status: SessionStatus;
   userId: string | null;
+  /** Anonym oder verknuepft — `null`, solange niemand angemeldet ist. */
+  identity: Identity | null;
   signIn: () => Promise<void>;
+  /**
+   * Die Identitaet neu nachsehen — nach Verknuepfen, Anmelden und Abmelden.
+   * Ohne diesen Aufruf zeigten die Einstellungen weiter den Stand von vorhin.
+   */
+  refresh: () => Promise<void>;
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
   status: 'idle',
   userId: null,
+  identity: null,
+
+  refresh: async () => {
+    if (!isSupabaseConfigured) return;
+    try {
+      const identity = await currentIdentity();
+      set({
+        identity,
+        userId: identity?.userId ?? null,
+        status: identity === null ? 'idle' : 'ready',
+      });
+    } catch (error: unknown) {
+      console.warn('[kompendium] Identitaet liess sich nicht lesen:', error);
+    }
+  },
 
   signIn: async () => {
     if (!isSupabaseConfigured) {
@@ -55,13 +87,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     try {
       const userId = await ensureSession();
       if (userId === null) {
-        set({ status: 'failed', userId: null });
+        set({ status: 'failed', userId: null, identity: null });
         return;
       }
-      set({ status: 'ready', userId });
+      set({ status: 'ready', userId, identity: await currentIdentity() });
     } catch (error: unknown) {
       console.warn('[kompendium] Anmeldung bei Supabase fehlgeschlagen:', error);
-      set({ status: 'failed', userId: null });
+      set({ status: 'failed', userId: null, identity: null });
     }
   },
 }));

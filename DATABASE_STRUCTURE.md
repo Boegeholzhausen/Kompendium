@@ -33,6 +33,7 @@ nur eine Datenbankzeile.
 | `icon` | text | Phosphor-Icon-Name |
 | `color` | text | Token-Name aus der Palette, kein Hex, Default `mint` |
 | `sort_order` | int | Default 0 |
+| `keep_offline` | boolean | Default `false` — „Inhalt offline behalten" gilt für den Nutzer, nicht für ein Gerät |
 | `created_at` / `updated_at` | timestamptz | `updated_at` per Trigger fortgeschrieben |
 | `deleted_at` | timestamptz | Soft Delete |
 
@@ -60,11 +61,29 @@ nur eine Datenbankzeile.
 | `deleted_at` | timestamptz | Soft Delete = Papierkorb, 30 Tage |
 | `read_at` | timestamptz | Workflow-Status: gelesen; `null` = ungelesen |
 | `archived_at` | timestamptz | Workflow-Status: archiviert (zweite Achse) |
+| `scroll_offset` | int | Leseposition in dp, Default 0 — gehört zum Dokument und geht über die Outbox mit |
+| `source_path` | text | Pfad der Datei im HTML-Ordner am PC; nur `scripts/upload.mjs` schreibt ihn |
 | `search_vector` | tsvector, generiert | Volltextsuche Deutsch, gewichtet Titel (A) > Beschreibung (B) > Vorschautext (C), GIN-Index |
 
 Indizes: `documents_search_idx` (GIN auf `search_vector`),
 `documents_updated_idx` (`owner_id, updated_at` — Pull-Wasserzeichen),
 `documents_folder_idx` (`owner_id, folder_id`).
+
+### Tabelle `user_settings`
+
+| Spalte | Typ | Bemerkung |
+|---|---|---|
+| `owner_id` | uuid | Default `auth.uid()`, RLS-Schlüssel, Teil des PK |
+| `key` | text | Teil des PK |
+| `value` | text | |
+| `updated_at` | timestamptz | per Trigger; der jüngere Wert gewinnt |
+
+Schlüssel-Wert statt Spaltensatz: die Menge wächst mit jeder neuen
+Einstellung, und jede davon wäre sonst eine Migration auf beiden Seiten.
+Hoch gehen ausschließlich die Schlüssel aus `SYNCED_SETTING_KEYS`
+(`repository.ts`) — Textgröße, Abdunkeln, Bildschirm anlassen, Ansicht,
+Sortierung. Gerätebezogenes bleibt lokal: `search.recentQueries` ist ein
+Verlauf dieses Geräts und keine Voreinstellung des Nutzers.
 
 ### Weggefallen: `tags` und `document_tags`
 
@@ -89,29 +108,47 @@ Spalte.
   beschränken.
 - **Auth:** anonymes Sign-in (`supabase.auth.signInAnonymously()`), kein
   Login-Screen. Ein anonymer Nutzer bekommt eine echte, dauerhafte User-ID,
-  die als `owner_id` in den Zeilen landet und auf die RLS zugreift. Upgrade-
-  Pfad für ein zweites Gerät: die anonyme Identität später per Magic Link
-  mit einer E-Mail verknüpfen.
+  die als `owner_id` in den Zeilen landet und auf die RLS zugreift.
+  Für ein zweites Gerät wird diese Identität mit einer E-Mail **verknüpft**
+  (`auth.updateUser({ email })`, siehe `src/data/supabase.ts`) — sie wird
+  dabei nie ersetzt, sonst wären alle vorhandenen Zeilen verwaist. Bestätigt
+  wird mit dem sechsstelligen Code aus der Mail (`verifyOtp`), nicht mit einem
+  Magic Link: der bräuchte einen Deep-Link-Rückweg, den Expo Go nicht
+  verlässlich bedient.
 
 ---
 
 ## Lokal — expo-sqlite (`src/data/db/schema.ts`)
 
-`SCHEMA_VERSION = 4`, Datenbankname `kompendium.db`. Fünf Tabellen:
+`SCHEMA_VERSION = 7`, Datenbankname `kompendium.db`. Sechs Tabellen:
 
 | Tabelle | Zweck |
 |---|---|
 | `documents` | eine Zeile je Dokument, mit allem, was ein Screen zeigt |
 | `folders` | Name (zugleich Ausweis, PK), Farbe, „Inhalt offline behalten", `remote_id` |
 | `outbox` | was lokal geändert wurde und noch nach oben muss |
+| `folder_deletions` | Grabsteine gelöschter Ordner (`remote_id`, `queued_at`) |
 | `settings` | Schlüssel-Wert-Paar für Darstellung und Bibliothek-Voreinstellungen |
-| `sync_state` | Buchhaltung des Abgleichs (`last_pulled_at`, `reset_done`) |
+| `sync_state` | Buchhaltung des Abgleichs (siehe unten) |
 
-`documents`-Spalten: `id` (PK), `title`, `doc_type`, `folder_name`,
-`favorite`, `cached`, `size_bytes`, `updated_at`, `imported_at`,
-`open_count`, `last_opened_at` (seit Version 2), `note`, `keep_offline`,
-`trashed_at`, `source`, `cache_key`, `storage_path`, `content_hash`
-(beide seit Version 3), `read_at`, `archived_at` (beide seit Version 4).
+`documents`-Spalten: `id` (PK, seit Version 6 eine **UUID** — dieselbe wie
+oben), `title`, `doc_type`, `folder_name`, `favorite`, `cached`, `size_bytes`,
+`updated_at`, `imported_at`, `open_count`, `last_opened_at` (seit Version 2),
+`note`, `keep_offline`, `trashed_at`, `source`, `cache_key`, `storage_path`,
+`content_hash` (beide seit Version 3), `read_at`, `archived_at` (beide seit
+Version 4), `scroll_offset` (seit Version 7).
+
+`sync_state`-Schlüssel: `last_pulled_at` (Wasserzeichen, ein **Server**-
+Zeitstempel), `reset_done` (einmaliger Schnitt vom Beispiel-Bestand),
+`uuid_ids_done` und `scroll_moved` (die beiden einmaligen Datenwanderungen),
+`settings_pushed` (was zuletzt an `user_settings` hochging) und `owner_id`
+(unter welcher Identität abgeglichen wurde).
+
+**Warum Ordner keine Outbox haben:** bei einer Handvoll Ordner ist der direkte
+Vergleich des ganzen Bestands mit oben der einfachere richtige Weg
+(`readFoldersForPush`). Genau ein Fall entzieht sich dem Vergleich — eine
+gelöschte Zeile hinterlässt lokal nichts, was er noch finden könnte. Dafür gibt
+es `folder_deletions`.
 
 `read_at` und `archived_at` sind zwei Spalten und nicht eine Status-Spalte
 mit drei Werten: Archiv ist eine zweite Achse neben gelesen/ungelesen — ein
@@ -147,7 +184,23 @@ schlechter als keins. Version 3: `storage_path`, `content_hash`,
 `document_tags` hängt per Fremdschlüssel an `tags` und `PRAGMA foreign_keys`
 steht auf `ON`. Bestehende Zeilen starten mit `read_at = NULL`, sind also
 ungelesen: was vor dem Umbau gelesen wurde, weiß niemand mehr, und "alles
-gelesen" wäre eine Behauptung.
+gelesen" wäre eine Behauptung. Version 5: `folder_deletions`. Version 7:
+`documents.scroll_offset`.
+
+**Zwei Datenwanderungen stehen bewusst NICHT in `migrations`** — dort steht
+ausschließlich SQL, und beide müssen Zeile für Zeile rechnen. Sie liegen im
+Repository und sind über `sync_state` abgesichert, nicht über `user_version`:
+
+- `migrateLocalIdsToUuid` (Version 6, Schlüssel `uuid_ids_done`) tauscht die
+  alten `doc-import-…`-Kennungen gegen UUIDs. `public.documents.id` ist oben
+  eine `uuid`; solche Zeilen konnten deshalb prinzipiell nie hochgehen. Je
+  Zeile in einer Transaktion, weil der Outbox-Fremdschlüssel mitzieht — der
+  Eintrag wird gemerkt, entfernt und unter der neuen Kennung neu geschrieben.
+  `cache_key` bleibt unverändert: die Datei im Cache wird nicht umbenannt.
+- `adoptScrollPositions` (Version 7, Schlüssel `scroll_moved`) holt die
+  Lesepositionen aus dem `settings`-Schlüssel `viewer.scrollPositions` in die
+  Dokumentzeile und entfernt den alten Eintrag. Läuft nach der ID-Wanderung:
+  die Positionen sind nach der Dokumentkennung geschlüsselt.
 
 **Zugriff:** `repository.ts` ist die einzige Stelle im Projekt mit SQL.
 Screens und Zustand-Stores kennen die Datenbank nicht — sie lesen/schreiben
@@ -177,6 +230,10 @@ Ausweis (dem **Namen**) und dem oberen (einer UUID). Oben trägt
 `documents.source_path` den Pfad der Datei im HTML-Ordner am PC — daran
 erkennt `scripts/upload.mjs` beim zweiten Lauf dieselbe Datei wieder.
 
+Später dazugekommen: lokal `folder_deletions` (Grabsteine) und
+`documents.scroll_offset`, oben `folders.keep_offline`,
+`documents.scroll_offset` und die Tabelle `user_settings`.
+
 ---
 
 ## Sync-Strategie (Zielbild)
@@ -188,9 +245,9 @@ mit Merge-Konflikten.
 und Pull (`src/data/remote/pull.ts`), in dieser Reihenfolge, angestoßen beim
 Start und über „Jetzt synchronisieren"; das Nachladen der Dateien ebenfalls
 (`src/data/remote/download.ts`). `pending` heißt seitdem, was das Wort sagt:
-die Outbox ist nicht leer (`countOutbox`). Offen bleibt der Weg für die
-Dateien selbst — ein am Handy importiertes Dokument hat keinen
-`storage_path` und wird deshalb nicht eingereiht.
+die Outbox ist nicht leer (`countOutbox`). Ordner, am Handy importierte
+Dokumente samt Datei, Leseposition und Voreinstellungen gehen inzwischen
+ebenfalls hoch.
 
 **Pull (Supabase → App):** Die App merkt sich `last_pulled_at` als
 **Server**-Zeitstempel (nie die Gerätezeit, sonst driftet es). Bei App-Start,
@@ -200,7 +257,32 @@ Zeilen per `INSERT OR REPLACE` in SQLite schreiben, `last_pulled_at` auf das
 größte empfangene `updated_at` setzen. Löschungen brauchen keinen
 Sonderweg, weil Soft Delete `updated_at` mitsetzt.
 
-**Push (App → Supabase):** Jede lokale Änderung schreibt sofort nach SQLite
+**Push (App → Supabase), vier Schritte in fester Reihenfolge:**
+
+1. **Ordner** (`pushFolders`). Grabsteine zuerst, dann der Bestand: Ordner mit
+   `remote_id` werden fortgeschrieben, Ordner ohne einen erst über den Namen
+   gesucht (*gleicher Name = derselbe Ordner*) und sonst angelegt. Die
+   zurückgegebene `id` wird sofort lokal festgehalten. Die Farbe wird dabei
+   zurück in den Token-Namen übersetzt (`tokenFor`, Gegenstück zu `colorFor`
+   im Pull) — ein Hex-Wert oben wäre eine Kopie, die beim nächsten Feinschliff
+   des Themes zurückbleibt.
+2. **Neue Dokumente** (`uploadNewDocuments`). Alles ohne `storage_path`, mit
+   Datei im Cache und `source != 'sample'`: HTML lesen, sha256 bilden, Datei
+   nach `<owner_id>/<uuid>.html` legen, Zeile einfügen, `markUploaded`. Ab dann
+   läuft das Dokument den normalen Outbox-Weg.
+3. **Geänderte Felder** — die Outbox (unten).
+4. **Voreinstellungen** (`pushSettings`) in `user_settings`.
+
+Die Reihenfolge hängt fest: ein Dokument in einem Ordner kann nur hochgehen,
+wenn der Ordner oben eine Zeile hat, und ein `update` auf eine Zeile, die es
+oben nicht gibt, trifft nichts und meldet trotzdem Erfolg.
+
+Wechselt die Identität (E-Mail-Anmeldung, Abmelden), verliert der Abgleich
+zuerst seine Merkposten (`noteOwner`): Wasserzeichen, `folders.remote_id` und
+`settings_pushed` sind dann Aussagen über ein fremdes Konto, und unter RLS
+scheitert ein `update` darauf nicht — es trifft keine Zeile und meldet Erfolg.
+
+**Die Outbox selbst:** Jede lokale Änderung schreibt sofort nach SQLite
 (UI reagiert instant) und legt einen Outbox-Eintrag an. Das passiert an genau
 einer Stelle — in `repository.updateDocuments`, im selben Zug wie das
 Schreiben: dort läuft jede Änderung eines Screens durch, und damit kann
@@ -221,6 +303,15 @@ Abruf ihre Nutzerfelder. Sonst nähme der Pull zurück, was gerade offline
 gewischt wurde, und der folgende Push schriebe den alten Wert wieder hoch.
 Technische Felder (`doc_type`, `size_bytes`, `updated_at`, `source`,
 `storage_path`, `content_hash`) kommen weiterhin immer vom Server.
+Für `user_settings` gilt schlicht: der jüngere `updated_at`-Wert gewinnt — bei
+einer Voreinstellung gibt es nichts zu vereinigen, nur zu wählen.
+
+**Die Leseposition** steht seit Version 7 in `documents.scroll_offset` und
+geht damit über dieselbe Outbox wie „gelesen". Geschrieben wird nur beim
+Verlassen des Viewers und beim Wechsel in den Hintergrund (`flushScroll` in
+`state/viewer.ts`): jede Schreibung reiht das Dokument in die Outbox ein, und
+beim Lesen eines langen Textes spränge der Sync-Status sonst dauernd zwischen
+„Synchron" und „Änderungen offen".
 
 **Die Dateien selbst** gelten als unveränderlich. Ändert sich der Inhalt am
 PC, ändert sich `content_hash`, und die App lädt beim nächsten Öffnen neu —
@@ -251,8 +342,9 @@ anmelden. Der hängt an einer anonymen Identität, und die des PCs wäre eine
 andere als die des Handys — die App sähe die hochgeladenen Zeilen nie. Es
 schreibt deshalb mit dem Service-Role-Key aus `.env.local` und setzt `owner_id`
 selbst auf die Kennung des Geräts (sie steht in den Einstellungen unter
-„Synchronisierung", und bei genau einer Identität im Projekt findet das Skript
-sie allein). Dieser Schlüssel umgeht RLS vollständig und gehört ausschließlich
+„Konto", und bei genau einer Identität im Projekt findet das Skript sie
+allein). Das Verknüpfen mit einer E-Mail ändert diese Kennung nicht — eine
+einmal eingetragene `KOMPENDIUM_OWNER_ID` bleibt gültig. Dieser Schlüssel umgeht RLS vollständig und gehört ausschließlich
 auf den Rechner — niemals in die App, niemals ins Repository.
 
 ---
@@ -278,6 +370,12 @@ Ca. 15–20 Minuten, zwei Schritte.
 6. **Authentication → Sign In / Providers:** `Anonymous sign-ins`
    aktivieren und speichern — ohne diese Einstellung schlägt jeder Login
    fehl und es fließen keine Daten.
+7. Am selben Ort **Email** aktivieren und in den Mail-Vorlagen (`Confirm
+   signup`, `Magic Link`, `Change Email Address`) `{{ .Token }}` ergänzen —
+   die App bestätigt mit dem sechsstelligen Code, nicht mit dem Link. Erst
+   damit lässt sich die Geräte-Identität unter *Einstellungen → Konto* mit
+   einer E-Mail verknüpfen und ein zweites Gerät anmelden. Schritt für
+   Schritt: [supabase/SETUP.md](supabase/SETUP.md).
 
 ### 2. `.env` anlegen
 

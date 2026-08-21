@@ -8,10 +8,11 @@
  *
  * Drei Tabellen und zwei Schluessel-Wert-Paare:
  *
- *   documents       eine Zeile je Dokument, mit allem, was ein Screen zeigt
- *   folders         Name (zugleich Ausweis), Farbe, "Inhalt offline behalten"
- *   outbox          was lokal geaendert wurde und noch nach oben muss
- *   settings        Darstellung und Bibliothek-Voreinstellungen
+ *   documents        eine Zeile je Dokument, mit allem, was ein Screen zeigt
+ *   folders          Name (zugleich Ausweis), Farbe, "Inhalt offline behalten"
+ *   outbox           was lokal geaendert wurde und noch nach oben muss
+ *   folder_deletions Grabsteine geloeschter Ordner (siehe unten)
+ *   settings         Darstellung und Bibliothek-Voreinstellungen
  *
  * Der Workflow-Status (`read_at`, `archived_at`) steht als Spalte in der
  * Dokumentzeile und nicht als Zuordnung wie frueher die Tags: "gelesen" ist
@@ -36,7 +37,7 @@
  * Bei Aenderungen am Schema hochzaehlen. `user_version` steht in der Datei
  * selbst — daran erkennt der naechste Start, ob eine Migration faellig ist.
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 7;
 
 export const DATABASE_NAME = 'kompendium.db';
 
@@ -75,7 +76,11 @@ CREATE TABLE IF NOT EXISTS documents (
   -- nicht archiviert. Zwei Spalten statt einer, weil Archiv eine zweite Achse
   -- ist: sonst ginge beim Entarchivieren verloren, dass gelesen wurde.
   read_at      INTEGER,
-  archived_at  INTEGER
+  archived_at  INTEGER,
+  -- Leseposition in dp vom Seitenanfang. Sie stand frueher als JSON-Objekt in
+  -- der settings-Tabelle — ein Wert ueber ein Dokument, der nicht am
+  -- Dokument hing und deshalb auch nie mit ihm nach oben ging.
+  scroll_offset INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS folders (
@@ -97,6 +102,19 @@ CREATE TABLE IF NOT EXISTS outbox (
   -- gespeicherte Werte waeren eine zweite Wahrheit, die veralten kann.
   fields      TEXT NOT NULL,
   queued_at   INTEGER NOT NULL
+);
+
+-- Grabsteine geloeschter Ordner.
+--
+-- Der Push vergleicht den lokalen Ordnerbestand direkt mit oben — eine zweite
+-- Outbox nur fuer eine Handvoll Ordner waere Buchhaltung ohne Gegenwert. Genau
+-- ein Fall entzieht sich diesem Vergleich: eine geloeschte Zeile hinterlaesst
+-- lokal nichts, was der Vergleich noch finden koennte. Der Grabstein ist die
+-- einzige Spur, an der der naechste Lauf erkennt, dass oben ein deleted_at
+-- faellig ist.
+CREATE TABLE IF NOT EXISTS folder_deletions (
+  remote_id TEXT PRIMARY KEY NOT NULL,
+  queued_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -139,6 +157,13 @@ CREATE INDEX IF NOT EXISTS documents_by_folder ON documents (folder_name);
  * `read_at = NULL`, sind also ungelesen — was vor dem Umbau gelesen wurde,
  * weiss niemand mehr, und "alles gelesen" waere eine Behauptung. Dieselbe
  * Zurueckhaltung wie bei `last_opened_at` in Version 2.
+ *
+ * Version 6 steht bewusst OHNE Eintrag: die Umstellung der lokalen
+ * Import-Kennungen auf UUIDs ist eine Datenwanderung und kein `ALTER TABLE`.
+ * Sie muss Zeile fuer Zeile rechnen (neue Kennung erzeugen, Outbox und
+ * Leseposition mitziehen) — hier steht ausschliesslich SQL. Ihr Platz ist
+ * `migrateLocalIdsToUuid` im Repository, abgesichert ueber den
+ * `sync_state`-Schluessel `uuid_ids_done`.
  */
 export const migrations: { to: number; sql: string }[] = [
   { to: 2, sql: 'ALTER TABLE documents ADD COLUMN last_opened_at INTEGER' },
@@ -167,4 +192,20 @@ export const migrations: { to: number; sql: string }[] = [
       queued_at   INTEGER NOT NULL
     )`,
   },
+  // Version 5: Ordner gehen nach oben. Der Grabstein ist die einzige Spur, die
+  // ein geloeschter Ordner hinterlaesst — ohne ihn faende der Vergleich beim
+  // naechsten Push nichts mehr, was zu loeschen waere.
+  {
+    to: 5,
+    sql: `CREATE TABLE IF NOT EXISTS folder_deletions (
+      remote_id TEXT PRIMARY KEY NOT NULL,
+      queued_at INTEGER NOT NULL
+    )`,
+  },
+  // Version 7: die Leseposition wandert aus `settings` in die Dokumentzeile.
+  // Die Uebernahme der vorhandenen Werte ist wieder eine Datenwanderung und
+  // steht deshalb nicht hier, sondern in `adoptScrollPositions` im Repository
+  // (`sync_state`-Schluessel `scroll_moved`). Der Vorgabewert 0 ist richtig:
+  // ein Dokument ohne gemerkte Stelle faengt oben an.
+  { to: 7, sql: 'ALTER TABLE documents ADD COLUMN scroll_offset INTEGER NOT NULL DEFAULT 0' },
 ];

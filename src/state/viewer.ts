@@ -7,28 +7,37 @@
  * gelesen wird, und werden beim naechsten Oeffnen bewusst zurueckgesetzt: wer
  * ein Dokument aufschlaegt, will es sehen, nicht ein offenes Sheet vorfinden.
  *
- * "Persistieren" heisst hier wirklich ueber den Neustart hinweg: die Positionen
- * liegen als ein JSON-Objekt in der vorhandenen `settings`-Tabelle. Ein eigenes
- * Schema braucht das nicht — es ist ein Wert pro Dokument, und die Bibliothek
- * ist klein genug, dass das Objekt in eine Zeile passt.
+ * ## Wo die Position liegt
  *
- * Geschrieben wird NICHT bei jedem Scrollschritt. `handleScroll` im
- * ViewerScreen feuert ab 8 px Unterschied, also viele Male pro Sekunde;
- * jeder davon eine Datenbankschreibung waere waehrend des Lesens spuerbar.
- * Der Zustand wandert deshalb sofort mit (die Anzeige haengt daran), die
- * Datenbank fruehestens alle zwei Sekunden — und in jedem Fall beim Verlassen
- * des Viewers ueber `flushScroll()`, damit die zuletzt gelesene Stelle nicht
- * an der Drossel haengen bleibt.
+ * Seit Schema 7 in der Dokumentzeile (`documents.scroll_offset`), nicht mehr
+ * als JSON-Objekt in der `settings`-Tabelle. Der Grund ist der Abgleich: die
+ * Leseposition gehoert zum Dokument, und als Spalte geht sie ueber die
+ * vorhandene Outbox mit — auf dem zweiten Geraet steht der Text dann dort, wo
+ * man aufgehoert hat. Als Voreinstellung haette sie nie einen Weg nach oben
+ * gefunden, weil sie kein Wert ueber den Nutzer ist, sondern ueber einen Text.
+ *
+ * Der Zustand haelt trotzdem eine eigene Abbildung im Arbeitsspeicher: die
+ * Anzeige haengt daran, und sie muss jedem Scrollschritt sofort folgen.
+ *
+ * ## Wann geschrieben wird
+ *
+ * `handleScroll` im ViewerScreen feuert ab 8 px Unterschied, also viele Male
+ * pro Sekunde. Geschrieben wird deshalb an genau zwei Stellen:
+ *
+ *   beim Verlassen des Viewers      `flushScroll()` im ViewerScreen
+ *   beim Wechsel in den Hintergrund `AppState`-Abo weiter unten
+ *
+ * Frueher lief hier zusaetzlich eine Zwei-Sekunden-Drossel. Sie ist entfallen,
+ * seit die Position ueber die Outbox nach oben geht: jede Schreibung reiht das
+ * Dokument dort ein, und beim Lesen eines langen Textes spraenge der
+ * Sync-Status sonst dauernd zwischen "Synchron" und "Änderungen offen". Beide
+ * verbliebenen Momente sind solche, in denen ohnehin nicht gelesen wird.
  */
+import { AppState } from 'react-native';
 import { create } from 'zustand';
 
 import { persist } from '../data/db/persist';
-import { setSetting } from '../data/db/repository';
-
-export const SETTING_SCROLL_POSITIONS = 'viewer.scrollPositions';
-
-/** Frueheste Wiederholung einer Schreibung, in Millisekunden. */
-const WRITE_INTERVAL = 2000;
+import { updateDocuments } from '../data/db/repository';
 
 interface ViewerState {
   /** Leseposition je Dokument, in dp vom Seitenanfang. */
@@ -36,42 +45,41 @@ interface ViewerState {
   /**
    * Gespeicherte Positionen uebernehmen. `documentIds` ist der Bestand nach
    * dem Aufraeumen des Papierkorbs — Eintraege zu Dokumenten, die es nicht
-   * mehr gibt, fliegen dabei raus, damit das Objekt nicht unbegrenzt waechst.
+   * mehr gibt, fliegen dabei raus.
    */
-  hydrate: (settings: Record<string, string>, documentIds: string[]) => void;
+  hydrate: (scrollPositions: Record<string, number>, documentIds: string[]) => void;
   rememberScroll: (documentId: string, offset: number) => void;
   /** Eintraege zu geloeschten Dokumenten vergessen (endgueltiges Loeschen). */
   forgetScroll: (documentIds: string[]) => void;
 }
 
+/**
+ * Welche Positionen sich seit der letzten Schreibung geaendert haben.
+ *
+ * Nur diese gehen in die Datenbank: ein `UPDATE` ueber den ganzen Bestand
+ * reihte jedes Dokument in die Outbox ein, auch die, die niemand angefasst hat.
+ */
+const dirty = new Set<string>();
+
 export const useViewerStore = create<ViewerState>((set, get) => ({
   scrollPositions: {},
 
-  hydrate: (settings, documentIds) => {
-    const raw = settings[SETTING_SCROLL_POSITIONS];
-    if (raw === undefined) return;
-
+  hydrate: (scrollPositions, documentIds) => {
     const known = new Set(documentIds);
-    const scrollPositions: Record<string, number> = {};
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      if (parsed !== null && typeof parsed === 'object') {
-        for (const [id, offset] of Object.entries(parsed as Record<string, unknown>)) {
-          if (typeof offset === 'number' && Number.isFinite(offset) && known.has(id)) {
-            scrollPositions[id] = offset;
-          }
-        }
-      }
-    } catch {
-      // Kaputtes JSON ist kein Grund, den Start abzubrechen: dann faengt jedes
-      // Dokument eben wieder oben an.
+    const kept: Record<string, number> = {};
+    for (const [id, offset] of Object.entries(scrollPositions)) {
+      if (Number.isFinite(offset) && known.has(id)) kept[id] = offset;
     }
-    set({ scrollPositions });
+    // Was hier hydriert wird, steht bereits in der Datenbank — es waere ein
+    // Fehler, es als Aenderung zu melden.
+    dirty.clear();
+    set({ scrollPositions: kept });
   },
 
   rememberScroll: (documentId, offset) => {
+    if (get().scrollPositions[documentId] === offset) return;
+    dirty.add(documentId);
     set((state) => ({ scrollPositions: { ...state.scrollPositions, [documentId]: offset } }));
-    schedule(get);
   },
 
   forgetScroll: (documentIds) => {
@@ -80,52 +88,42 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
     const scrollPositions = Object.fromEntries(
       Object.entries(get().scrollPositions).filter(([id]) => !gone.has(id))
     );
+    for (const id of documentIds) dirty.delete(id);
     if (Object.keys(scrollPositions).length === before) return;
 
+    // Nichts zu schreiben: die Zeilen sind endgueltig geloescht, und mit ihnen
+    // ihre Spalte.
     set({ scrollPositions });
-    // Loeschen ist kein Scrollschritt: es darf nicht bis zu zwei Sekunden in
-    // der Drossel haengen, sondern geht sofort in die Datenbank.
-    schedule(get);
-    flushScroll();
   },
 }));
 
-/** Wann zuletzt geschrieben wurde — Grundlage der Drossel. */
-let lastWrite = 0;
-let timer: ReturnType<typeof setTimeout> | null = null;
-let read: (() => ViewerState) | null = null;
-/** Steht eine Aenderung an, die noch nicht in der Datenbank ist? */
-let pending = false;
-
-function write() {
-  if (read === null || !pending) return;
-  pending = false;
-  lastWrite = Date.now();
-  const value = JSON.stringify(read().scrollPositions);
-  persist(() => setSetting(SETTING_SCROLL_POSITIONS, value));
-}
-
-function schedule(get: () => ViewerState) {
-  read = get;
-  pending = true;
-  if (timer !== null) return;
-
-  const wait = Math.max(0, WRITE_INTERVAL - (Date.now() - lastWrite));
-  timer = setTimeout(() => {
-    timer = null;
-    write();
-  }, wait);
-}
-
 /**
- * Ausstehendes Schreiben sofort erledigen — beim Verlassen des Viewers.
- * Ohne diesen Aufruf ginge die letzte Position verloren, wenn der Nutzer
- * innerhalb der Drosselzeit zurueckgeht.
+ * Ausstehendes Schreiben sofort erledigen.
+ *
+ * Zwei Aufrufer: der ViewerScreen beim Verlassen und das `AppState`-Abo
+ * darunter. Ohne den ersten ginge die zuletzt gelesene Stelle verloren, ohne
+ * den zweiten alles, was seit dem Aufschlagen gelesen wurde, wenn die App aus
+ * dem Hintergrund heraus beendet wird.
  */
 export function flushScroll(): void {
-  if (timer !== null) {
-    clearTimeout(timer);
-    timer = null;
+  if (dirty.size === 0) return;
+
+  const positions = useViewerStore.getState().scrollPositions;
+  const pending = [...dirty];
+  dirty.clear();
+
+  for (const id of pending) {
+    const offset = positions[id];
+    if (offset === undefined) continue;
+    // Je Dokument ein Aufruf: `updateDocuments` schreibt einen Wert auf viele
+    // Zeilen, und hier hat jede Zeile ihren eigenen.
+    persist(() => updateDocuments([id], { scrollOffset: Math.max(0, Math.round(offset)) }));
   }
-  write();
 }
+
+// Das Abo laeuft ueber die Lebensdauer der App und wird nie geloest: es gibt
+// genau einen Zustand dieser Art, und ein Abmelden gaebe es nur beim Beenden —
+// also genau dann, wenn es zu spaet waere.
+AppState.addEventListener('change', (next) => {
+  if (next === 'background' || next === 'inactive') flushScroll();
+});

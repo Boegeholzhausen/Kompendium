@@ -25,6 +25,7 @@
  * selten, und die Antwort darauf ist ohnehin nur eine Frage, keine Sperre.
  */
 import * as Clipboard from 'expo-clipboard';
+import * as Crypto from 'expo-crypto';
 import * as DocumentPicker from 'expo-document-picker';
 import { File } from 'expo-file-system';
 
@@ -64,8 +65,19 @@ function looksLikeHtml(html: string): boolean {
   return /<[a-z!][\s\S]*>/i.test(html);
 }
 
+/**
+ * Die Kennung eines importierten Dokuments — eine UUID.
+ *
+ * Sie ist dieselbe wie oben in Supabase (`public.documents.id` ist vom Typ
+ * `uuid`). Eine eigene lokale Kennung mit einer Zuordnungstabelle daneben
+ * waere eine zweite Wahrheit ueber dieselbe Zeile, und die frueheren
+ * `doc-import-…`-Kennungen konnten aus genau diesem Grund nie hochgehen.
+ *
+ * `cache_key` bleibt davon unberuehrt: wo die Datei auf dem Geraet liegt, ist
+ * eine Frage dieses Geraets und keine des Ausweises.
+ */
 function newId(): string {
-  return `doc-import-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`;
+  return Crypto.randomUUID();
 }
 
 /**

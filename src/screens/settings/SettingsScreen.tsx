@@ -5,21 +5,36 @@
  *
  *   Synchronisierung   Statuszeile mit Wolkensymbol und Zeitpunkt, darunter
  *                      "Jetzt synchronisieren" als Mint-Textzeile
+ *   Konto              anonym oder mit E-Mail verknuepft; erst verknuepft
+ *                      kann ein zweites Geraet denselben Bestand sehen
  *   Speicher           Balken aus zwei Segmenten mit Legende, "Offline
- *                      behaltene Dokumente" mit Chevron, "Cache leeren"
- *   ohne Ueberschrift  Papierkorb (mit Anzahl), Darstellung, Über
+ *                      behaltene Dokumente", Papierkorb (beide mit Anzahl),
+ *                      "Cache leeren"
+ *   Sonstiges          Darstellung, Über
  *
- * "Papierkorb, Darstellung und Über stehen ohne Gruppenueberschrift zusammen —
- * drei Einzelziele brauchen keine drei Ueberschriften."
+ * **Abweichung von Blatt `3i`:** dort stehen Papierkorb, Darstellung und Über
+ * ohne Gruppenueberschrift zusammen ("drei Einzelziele brauchen keine drei
+ * Ueberschriften"). Der Papierkorb ist aber belegter Platz und gehoert damit
+ * zu dem, was "Speicher" ohnehin aufzaehlt — neben "Offline behaltene
+ * Dokumente" beantwortet er dieselbe Frage. Was bleibt, sind zwei Zeilen ohne
+ * gemeinsames Thema; sie tragen jetzt "Sonstiges", damit keine Gruppe ohne
+ * Ueberschrift zwischen zwei beschrifteten haengt.
  *
  * Aktionen sind Mint-**Text**, keine Buttons, damit die Liste eine Liste
  * bleibt. Der Screen hat damit keine primaere Aktion, und das ist richtig: er
  * ist ein Verzeichnis, keine Aufgabe.
  *
- * **Abweichung:** die Zeile "Abnahmeblätter" ist ergaenzt. Die Blaetter aus
- * `src/dev` sind das Werkzeug, mit dem dieser Auftrag geprueft wird; sie muessen
- * erreichbar bleiben, und der Platz dafuer ist die letzte Gruppe. In einer
- * ausgelieferten Fassung faellt die Zeile weg.
+ * **Warum "Konto" eine eigene Gruppe ist und nicht in "Synchronisierung"
+ * steht:** die Sync-Gruppe beantwortet "ist alles oben?", die Konto-Gruppe
+ * "wem gehoert das oben?". Beides in einer Gruppe stuende nebeneinander, ohne
+ * dass die Ueberschrift noch beides traegt — und die Gerätekennung, die es
+ * dort schon gab, gehoert ohnehin zur zweiten Frage. Sie ist deshalb
+ * mitgewandert.
+ *
+ * Der Inhalt beginnt auf dem Seitenrand 16 unter der Sync-Leiste — derselbe
+ * Abstand wie in Bibliothek und Ordner. Vorher waren es 8, wodurch die erste
+ * Gruppenueberschrift beim Tab-Wechsel sichtbar hoeher sass als der Inhalt der
+ * Nachbar-Tabs.
  */
 import React, { useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
@@ -31,17 +46,25 @@ import * as Clipboard from 'expo-clipboard';
 import { clearCache } from '../../data/cache';
 import { formatRelative, formatTime } from '../../data/format';
 import { storageUsage } from '../../data/storage';
-import { isSupabaseConfigured } from '../../data/supabase';
+import { isSupabaseConfigured, signOut } from '../../data/supabase';
 import { useDocumentStore } from '../../state/documents';
 import { useSessionStore } from '../../state/session';
 import { syncLabels, useSyncStore } from '../../state/sync';
 import { accent, bg, semantic, size, space, text as textColor } from '../../theme';
-import { ArrowsDownUp, CloudCheck, CloudSlash, Warning } from '../../ui/icons';
+import {
+  ArrowsDownUp,
+  CloudCheck,
+  CloudSlash,
+  EnvelopeSimple,
+  UserCircleDashed,
+  Warning,
+} from '../../ui/icons';
 import { TitleHeader } from '../../ui/ScreenHeader';
 import { SettingsBlock, SettingsGroup, SettingsRow } from '../../ui/SettingsList';
-import { Text } from '../../ui/Text';
+import { SyncIndicator } from '../../ui/SyncIndicator';
 import { Toast } from '../../ui/Toast';
-import { StorageBar } from './StorageBar';
+import { AccountSheet, type AccountMode } from './AccountSheet';
+import { StorageSummary } from './StorageSummary';
 
 /** Version der App — steht in Blatt `3i` als "Version 1.4.0". */
 const APP_VERSION = '1.4.0';
@@ -58,8 +81,11 @@ export function SettingsScreen() {
   const sync = useSyncStore((state) => state.sync);
   const lastError = useSyncStore((state) => state.lastError);
   const userId = useSessionStore((state) => state.userId);
+  const identity = useSessionStore((state) => state.identity);
+  const refreshIdentity = useSessionStore((state) => state.refresh);
 
   const [notice, setNotice] = useState<string | null>(null);
+  const [accountMode, setAccountMode] = useState<AccountMode | null>(null);
 
   const usage = useMemo(() => storageUsage(documents), [documents]);
 
@@ -96,6 +122,23 @@ export function SettingsScreen() {
   };
 
   /**
+   * Abmelden — nur die Session, nie der Bestand.
+   *
+   * Die lokale Datenbank ist die Wahrheitsquelle; sie hier zu leeren waere ein
+   * Datenverlust fuer einen Vorgang, der ausschliesslich die Identitaet
+   * betrifft. Wer sich mit derselben Adresse wieder anmeldet, findet alles vor.
+   */
+  const leaveAccount = async () => {
+    try {
+      await signOut();
+      await refreshIdentity();
+      setNotice('Abgemeldet · deine Dokumente bleiben auf diesem Gerät');
+    } catch (error: unknown) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  /**
    * "Cache leeren" nimmt weg, was nur zufaellig noch da ist — Dokumente mit
    * "Offline behalten" bleiben. Die Zeilen selbst bleiben in allen Listen
    * stehen und sind nur nicht mehr zu oeffnen, genau wie jedes nicht geladene
@@ -121,6 +164,7 @@ export function SettingsScreen() {
     <View style={styles.screen}>
       <View style={{ paddingTop: insets.top }}>
         <TitleHeader title="Einstellungen" />
+        <SyncIndicator status={status} />
       </View>
 
       <ScrollView
@@ -144,19 +188,66 @@ export function SettingsScreen() {
             inert={status === 'syncing'}
             onPress={sync}
           />
-          {isSupabaseConfigured && userId !== null ? (
-            <SettingsRow
-              label="Gerätekennung"
-              value={`${userId.slice(0, 8)} …`}
-              note="tippen zum Kopieren"
-              onPress={() => void copyUserId()}
-            />
-          ) : null}
         </SettingsGroup>
+
+        {isSupabaseConfigured ? (
+          <SettingsGroup title="Konto" style={styles.group}>
+            {/* Wort UND Symbol, wie in der Statuszeile darueber. */}
+            <SettingsRow
+              label={identity?.email ?? 'Nicht verknüpft'}
+              note={
+                identity === null
+                  ? 'nicht angemeldet'
+                  : identity.anonymous
+                    ? 'nur auf diesem Gerät — ein zweites Gerät sieht nichts'
+                    : 'verknüpft'
+              }
+              icon={identity !== null && !identity.anonymous ? EnvelopeSimple : UserCircleDashed}
+              iconColor={
+                identity !== null && !identity.anonymous ? accent.base : textColor.secondary
+              }
+            />
+
+            {identity === null || identity.anonymous ? (
+              <SettingsRow
+                label={identity === null ? 'Mit E-Mail anmelden' : 'Gerät verknüpfen'}
+                action
+                onPress={() => setAccountMode(identity === null ? 'signin' : 'link')}
+              />
+            ) : (
+              <SettingsRow
+                label="Abmelden"
+                note="Deine Dokumente bleiben auf diesem Gerät. Zurück geht es über dieselbe Adresse."
+                action
+                onPress={() => void leaveAccount()}
+              />
+            )}
+
+            {/* Auf einem noch nicht verknuepften Geraet ist der zweite Weg
+                trotzdem erreichbar: wer die App neu installiert hat, will sich
+                anmelden und nicht eine zweite Identitaet verknuepfen. */}
+            {identity !== null && identity.anonymous ? (
+              <SettingsRow
+                label="Mit vorhandener E-Mail anmelden"
+                action
+                onPress={() => setAccountMode('signin')}
+              />
+            ) : null}
+
+            {userId !== null ? (
+              <SettingsRow
+                label="Gerätekennung"
+                value={`${userId.slice(0, 8)} …`}
+                note="tippen zum Kopieren · npm run upload braucht sie"
+                onPress={() => void copyUserId()}
+              />
+            ) : null}
+          </SettingsGroup>
+        ) : null}
 
         <SettingsGroup title="Speicher" style={styles.group}>
           <SettingsBlock>
-            <StorageBar usage={usage} />
+            <StorageSummary usage={usage} />
           </SettingsBlock>
           <SettingsRow
             label="Offline behaltene Dokumente"
@@ -164,26 +255,36 @@ export function SettingsScreen() {
             chevron
             onPress={() => push('/offline')}
           />
-          <SettingsRow label="Cache leeren" action onPress={() => void emptyCache()} />
-        </SettingsGroup>
-
-        <SettingsGroup style={styles.group}>
           <SettingsRow
             label="Papierkorb"
             value={String(usage.trashCount)}
             chevron
             onPress={() => push('/papierkorb')}
           />
-          <SettingsRow label="Darstellung" chevron onPress={() => push('/darstellung')} />
-          <SettingsRow label="Über" value={`Version ${APP_VERSION}`} />
-          <SettingsRow label="Abnahmeblätter" chevron onPress={() => push('/abnahme')} />
+          <SettingsRow label="Cache leeren" action onPress={() => void emptyCache()} />
         </SettingsGroup>
 
-        <Text variant="label" tone="tertiary" style={styles.footnote}>
-          Die Bibliothek liegt lokal auf diesem Gerät. Ohne Zugangsdaten für die
-          Synchronisierung bleibt sie dort.
-        </Text>
+        <SettingsGroup title="Sonstiges" style={styles.group}>
+          <SettingsRow label="Darstellung" chevron onPress={() => push('/darstellung')} />
+          <SettingsRow label="Über" value={`Version ${APP_VERSION}`} />
+        </SettingsGroup>
       </ScrollView>
+
+      <AccountSheet
+        visible={accountMode !== null}
+        mode={accountMode ?? 'link'}
+        onClose={() => setAccountMode(null)}
+        onDone={(next) => {
+          setNotice(next.email === null ? 'Angemeldet' : `Verknüpft mit ${next.email}`);
+          // Erst die Identitaet nachsehen, dann abgleichen: der Abgleich fragt
+          // sie ohnehin selbst, aber die Zeile darueber soll nicht noch den
+          // alten Zustand zeigen, waehrend schon geladen wird.
+          void (async () => {
+            await refreshIdentity();
+            await sync();
+          })();
+        }}
+      />
 
       <Toast
         visible={notice !== null}
@@ -203,13 +304,8 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: size.screenPadding,
-    paddingTop: space['8'],
   },
   group: {
     marginTop: space['24'],
-  },
-  footnote: {
-    marginTop: space['20'],
-    paddingHorizontal: space['4'],
   },
 });

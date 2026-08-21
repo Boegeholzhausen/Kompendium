@@ -6,7 +6,12 @@
  * gestrichelter Kachel.
  *
  * Eine Zeile "Alle Dokumente" gibt es hier bewusst nicht mehr: der
- * Bibliothek-Tab zeigt bereits alle Dokumente.
+ * Bibliothek-Tab zeigt bereits alle Dokumente. Mit ihr ist auch das
+ * `marginTop: 20` des Rasters weggefallen — es war der Abstand zwischen jener
+ * Zeile und den Kacheln und stand danach als zusaetzliche Luft unter der
+ * Sync-Leiste. Das Raster beginnt jetzt auf dem Seitenrand 16, demselben
+ * Abstand wie in Bibliothek und Einstellungen, sodass beim Tab-Wechsel nichts
+ * springt.
  *
  * Das Raster ist von Hand in Zeilen gelegt statt ueber eine FlatList mit
  * `numColumns`: die Kacheln sind unterschiedlich hoch (ein langer Ordnername
@@ -187,7 +192,6 @@ const styles = StyleSheet.create({
     padding: size.screenPadding,
   },
   grid: {
-    marginTop: space['20'],
     gap: space['12'],
   },
   row: {

@@ -77,6 +77,20 @@ alter table public.documents add column if not exists source_path text;
 create unique index if not exists documents_source_path_idx
   on public.documents(owner_id, source_path) where source_path is not null;
 
+-- ── Ordner: "Inhalt offline behalten" ─────────────────────────────────────
+-- Dieselbe Zusage wie am Dokument, nur fuer den ganzen Ordner. Bis hierher
+-- stand sie ausschliesslich lokal — auf einem zweiten Geraet waere sie damit
+-- verloren gewesen, obwohl sie eine Entscheidung des Nutzers ist und keine
+-- Eigenschaft dieses Geraets.
+alter table public.folders add column if not exists keep_offline boolean not null default false;
+
+-- Zur Spalte `color` oben: dort steht ein TOKEN-NAME aus der Palette
+-- (`tagPalette` in src/theme/colors.ts), nie ein Hex-Wert. Der Name ueberlebt
+-- jede Aenderung an der Palette, waehrend ein gespeicherter Hex-Wert eine
+-- Kopie waere, die beim naechsten Feinschliff des Themes zurueckbleibt.
+-- Uebersetzt wird deshalb erst an der Grenze: `colorFor` in
+-- src/data/remote/pull.ts herein, `tokenFor` in src/data/remote/push.ts hinaus.
+
 -- ── Workflow-Status ───────────────────────────────────────────────────────
 -- Zwei Spalten statt einer Status-Spalte mit drei Werten: Archiv ist eine
 -- zweite Achse neben gelesen/ungelesen. Ein archiviertes Dokument ist in aller
@@ -95,6 +109,27 @@ drop table if exists public.tags;
 -- Kein Index auf den Status: gefiltert wird in der App ueber den Bestand im
 -- Zustand, nicht in einer Abfrage.
 
+-- ── Leseposition ──────────────────────────────────────────────────────────
+-- Sie gehoert zum Dokument und nicht in eine Voreinstellungstabelle: "wie weit
+-- bin ich" ist eine Eigenschaft dieses einen Textes. Als Spalte geht sie ueber
+-- die vorhandene Outbox mit und braucht keinen eigenen Weg.
+alter table public.documents add column if not exists scroll_offset int not null default 0;
+
+-- ── Voreinstellungen je Konto ─────────────────────────────────────────────
+-- Textgroesse, Darstellung, Sortierung. Bewusst als Schluessel-Wert-Tabelle und
+-- nicht als Spaltensatz: die Menge waechst mit jeder neuen Einstellung, und
+-- jede davon waere sonst eine Migration auf beiden Seiten.
+--
+-- Was hier NICHT hingehoert, sind geraetebezogene Werte (zuletzt gesuchte
+-- Begriffe, Cachegroessen): sie beschreiben dieses Geraet, nicht den Nutzer.
+create table if not exists public.user_settings (
+  owner_id   uuid not null default auth.uid(),
+  key        text not null,
+  value      text not null,
+  updated_at timestamptz not null default now(),
+  primary key (owner_id, key)
+);
+
 -- ── updated_at automatisch fortschreiben ──────────────────────────────────
 -- Das Pull-Wasserzeichen der App verlaesst sich darauf. Soft Delete setzt
 -- deleted_at UND updated_at, damit Loeschungen durch dasselbe Wasserzeichen
@@ -110,7 +145,7 @@ $$;
 do $$
 declare t text;
 begin
-  foreach t in array array['folders','documents'] loop
+  foreach t in array array['folders','documents','user_settings'] loop
     execute format('drop trigger if exists %I_touch on public.%I', t, t);
     execute format(
       'create trigger %I_touch before update on public.%I
@@ -123,7 +158,7 @@ end $$;
 do $$
 declare t text;
 begin
-  foreach t in array array['folders','documents'] loop
+  foreach t in array array['folders','documents','user_settings'] loop
     execute format('alter table public.%I enable row level security', t);
     execute format('drop policy if exists %I_owner on public.%I', t, t);
     execute format(

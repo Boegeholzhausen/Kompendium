@@ -13,7 +13,13 @@
  * beheben kann.
  */
 import { TRASH_DAYS, type StoredDocument } from '../data/library';
-import { countOutbox, expiredTrashIds, loadSnapshot } from '../data/db/repository';
+import {
+  adoptScrollPositions,
+  countOutbox,
+  expiredTrashIds,
+  loadSnapshot,
+  migrateLocalIdsToUuid,
+} from '../data/db/repository';
 import { warmSearchIndex } from '../data/search';
 import { useAppearanceStore } from './appearance';
 import { purgeDocuments, useDocumentStore } from './documents';
@@ -70,6 +76,36 @@ async function setInitialSyncStatus(): Promise<void> {
 }
 
 /**
+ * Die beiden einmaligen Datenwanderungen, in dieser Reihenfolge:
+ *
+ *   1. Import-Kennungen auf UUIDs (`migrateLocalIdsToUuid`)
+ *   2. Lesepositionen aus `settings` in die Dokumentzeile
+ *      (`adoptScrollPositions`)
+ *
+ * Die Reihenfolge haengt fest: die Positionen sind nach der Dokumentkennung
+ * geschluesselt, und ein UPDATE auf die alte Kennung traefe keine Zeile mehr.
+ *
+ * Beide laufen VOR dem Lesen des Snapshots: danach traegt jedes Dokument die
+ * Kennung, unter der es auch oben stehen wird, und die Zustaende bekommen von
+ * der Umstellung nichts mit. Umgekehrt haetten die Screens fuer die Dauer
+ * einer Sitzung Kennungen in der Hand, die es in der Datenbank nicht mehr
+ * gibt.
+ *
+ * Faellt eine aus, startet die App trotzdem — die betroffenen Dokumente
+ * bleiben dann, was sie vorher waren: lokal. Das ist kein Grund, die
+ * Bibliothek nicht zu zeigen. Beide sind ueber `sync_state` abgesichert und
+ * laufen beim naechsten Start erneut, wenn sie nicht durchkamen.
+ */
+async function runDataMigrations(): Promise<void> {
+  try {
+    await migrateLocalIdsToUuid();
+    await adoptScrollPositions();
+  } catch (error: unknown) {
+    console.warn('[kompendium] Datenwanderung fehlgeschlagen:', error);
+  }
+}
+
+/**
  * Der Lauf selbst. `hydrateStores` fuehrt ihn genau einmal aus,
  * `reloadStores` erzwingt ihn erneut — nach einem Abgleich, der etwas
  * gebracht hat.
@@ -77,6 +113,7 @@ async function setInitialSyncStatus(): Promise<void> {
 function readAndDistribute(): Promise<void> {
   return (async () => {
     try {
+      await runDataMigrations();
       const snapshot = await loadSnapshot();
       const documents = await purgeExpiredTrash(snapshot.documents);
       useDocumentStore.getState().hydrate(documents);
@@ -88,7 +125,7 @@ function readAndDistribute(): Promise<void> {
       // Reihe: nur so laesst sich verwerfen, was zu einem Dokument gehoert,
       // das es nicht mehr gibt.
       useViewerStore.getState().hydrate(
-        snapshot.settings,
+        snapshot.scrollPositions,
         documents.map((document) => document.id)
       );
       // Der Sync-Zustand startet auf `pending`; hier bekommt er zum ersten Mal

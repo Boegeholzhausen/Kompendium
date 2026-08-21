@@ -127,14 +127,12 @@ app/suche.tsx          Suche (Push, ohne Tab-Bar)
 app/papierkorb.tsx     Papierkorb
 app/darstellung.tsx    Darstellung
 app/offline.tsx        Offline behaltene Dokumente
-app/abnahme.tsx        Abnahmeblätter (Entwicklung)
 src/theme/             Design-Tokens — einzige Stelle mit Hex-Werten
 src/ui/                Basiskomponenten, Kachel, Icon-Register
 src/screens/           Screens, je ein eigener Ordner
 src/state/             zustand-Stores
 src/data/              Typen, Formate, Suche, Import, Dateicache
 src/data/db/           Schema + Repository — einzige Stelle mit SQL
-src/dev/               Abnahmeblätter (Tokens, Kacheln, Komponenten)
 scripts/               Token-Linter, Screenshot-Skripte
 supabase/schema.sql    Backend-Schema für den späteren Sync
 ```

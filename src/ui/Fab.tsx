@@ -2,8 +2,11 @@
  * 13 · FAB.
  *
  * 56 x 56, `radius lg`, `accent`, `plus` 24 in `on-accent`; 16 vom rechten
- * Rand, 112 ueber der Unterkante — damit er ueber der Tab-Bar schwebt und die
- * Liste (Innenabstand unten 88) nicht verdeckt.
+ * Rand. Ueber der Tab-Bar (`withTabBar`) 112 ueber der Unterkante, damit er
+ * ueber ihr schwebt und die Liste (Innenabstand unten 88) nicht verdeckt.
+ * Ohne Tab-Bar — Push-Screens wie Ordner-Detail — nur `fabInset` (16) plus
+ * Safe Area: dort steht darunter kein zweites Element, das den Abstand
+ * fuellt, ein FAB in Tab-Bar-Hoehe haenge sonst sichtbar mitten im Screen.
  *
  * Entfaellt im Auswahlmodus und auf der leeren Bibliothek: dort traegt der
  * primaere Button dieselbe Aktion.
@@ -24,7 +27,8 @@ export interface FabProps {
   /**
    * Der Screen liegt in der Tab-Navigation. Die 112 zaehlen von der Unterkante
    * des Bildschirms, der FAB steckt aber in der Flaeche ueber der Tab-Bar —
-   * deren Hoehe samt Safe Area geht also ab.
+   * deren Hoehe samt Safe Area geht also ab. Ohne Tab-Bar (Push-Screens)
+   * steht der FAB stattdessen dicht ueber der Unterkante.
    */
   withTabBar?: boolean;
   style?: StyleProp<ViewStyle>;
@@ -40,7 +44,7 @@ export function Fab({
   const insets = useSafeAreaInsets();
   const bottom = withTabBar
     ? Math.max(size.fabInset, size.fabBottom - size.tabBarHeight - insets.bottom)
-    : size.fabBottom + insets.bottom;
+    : size.fabInset + insets.bottom;
 
   return (
     <PressableScale

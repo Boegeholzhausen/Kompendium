@@ -18,8 +18,11 @@
 import {
   applyRemote,
   clearLibrary,
+  noteOwner,
   readSyncState,
+  writeSettings,
   writeSyncState,
+  SYNCED_SETTING_KEYS,
   type RemoteDocument,
   type RemoteFolder,
   type RemoteSnapshot,
@@ -97,20 +100,27 @@ export async function pullChanges(): Promise<PullResult> {
     await writeSyncState('reset_done', new Date().toISOString());
   }
 
+  // Zweite Sicherung: `pushChanges` hat den Kontowechsel im selben Lauf schon
+  // bemerkt, aber der Abruf laesst sich auch fuer sich aufrufen. Der zweite
+  // Aufruf kostet eine Abfrage und tut sonst nichts.
+  await noteOwner(userId);
+
   const watermark = await readSyncState('last_pulled_at');
 
   // Die Reihenfolge der Abfragen ist gleichgueltig — geschrieben wird in einer
   // Transaktion, und dort haengt die Reihenfolge fest: erst Ordner, dann
   // Dokumente.
-  const [folderRows, documentRows] = await Promise.all([
+  const [folderRows, documentRows, settingRows] = await Promise.all([
     since('folders', watermark),
     since('documents', watermark),
+    since('user_settings', watermark),
   ]);
 
   const folders: RemoteFolder[] = folderRows.map((row) => ({
     remoteId: String(row.id),
     name: String(row.name ?? ''),
     color: colorFor(row.color as string | null),
+    keepOffline: row.keep_offline === true,
     deleted: row.deleted_at !== null,
   }));
 
@@ -140,6 +150,7 @@ export async function pullChanges(): Promise<PullResult> {
       contentHash: row.content_hash === null ? null : String(row.content_hash),
       readAt: millis(row.read_at as string | null),
       archivedAt: millis(row.archived_at as string | null),
+      scrollOffset: Number(row.scroll_offset ?? 0),
     };
   });
 
@@ -147,17 +158,49 @@ export async function pullChanges(): Promise<PullResult> {
 
   await applyRemote(snapshot);
 
+  // Die Voreinstellungen stehen neben dem Bestand und nicht darin: sie
+  // beschreiben, WIE gelesen wird, nicht WAS. Sie gehen deshalb an
+  // `writeSettings` und nicht durch `applyRemote`.
+  //
+  // Gefiltert wird auf die bekannten Schluessel: eine Zeile, die eine spaetere
+  // Fassung der App angelegt hat, gehoert nicht ungeprueft in die lokale
+  // Tabelle. Und `settings_pushed` wird mitgezogen, damit der naechste Push den
+  // gerade empfangenen Wert nicht sofort wieder ueberschreibt.
+  const incoming: Record<string, string> = {};
+  for (const row of settingRows) {
+    const key = String(row.key ?? '');
+    if (SYNCED_SETTING_KEYS.includes(key)) incoming[key] = String(row.value ?? '');
+  }
+  if (Object.keys(incoming).length > 0) {
+    await writeSettings(incoming);
+    const pushed = await readSyncState('settings_pushed');
+    const merged = { ...safeObject(pushed), ...incoming };
+    await writeSyncState('settings_pushed', JSON.stringify(merged));
+  }
+
   // Das neue Wasserzeichen ist der groesste empfangene Zeitstempel, nicht
   // "jetzt": zwischen Abfrage und Antwort kann oben eine Zeile entstanden
   // sein, und die waere mit der Geraetezeit fuer immer uebersprungen.
-  const stamps = [...folderRows, ...documentRows]
+  const stamps = [...folderRows, ...documentRows, ...settingRows]
     .map((row) => String(row.updated_at ?? ''))
     .filter((value) => value !== '');
   const newest = stamps.length === 0 ? null : stamps.reduce((a, b) => (a > b ? a : b));
   if (newest !== null) await writeSyncState('last_pulled_at', newest);
 
   return {
-    changed: folderRows.length + documentRows.length,
+    changed: folderRows.length + documentRows.length + settingRows.length,
     at: newest ?? watermark,
   };
+}
+
+/** Ein gemerkter JSON-Stand; ein kaputter Text heisst schlicht "noch nichts". */
+function safeObject(raw: string | null): Record<string, string> {
+  if (raw === null) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== 'object') return {};
+    return parsed as Record<string, string>;
+  } catch {
+    return {};
+  }
 }

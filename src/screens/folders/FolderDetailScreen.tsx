@@ -1,63 +1,68 @@
 /**
- * Screen 4 — Ordner-Detail (Blatt `3b`) und zugleich "Alle Dokumente".
+ * Screen 4 — Ordner-Detail (Blatt `3b`).
  *
  * Aufbau: 56er Kopfzeile **ohne Titel** (Zurueck-Pfeil und Ueberlaufmenue),
- * darunter Ordner-Icon 32, Name als `display`, "38 Dokumente · 12 MB" als
- * `caption`, zwei kompakte Aktionen und dann Sektionskopf mit
- * Ansichtsumschalter, Sortier-Schaltflaeche und derselben Liste wie in der
- * Bibliothek.
+ * darunter Ordner-Icon 32 und Name als `display` in EINER Zeile, "38
+ * Dokumente · 12 MB" als `caption`, Suchfeld, Filterleiste und dann
+ * Sektionskopf mit Ansichtsumschalter, Sortier-Schaltflaeche und derselben
+ * Liste wie in der Bibliothek.
  *
- * Beide Aktionen sind **sekundaer**: der Ordner hat keine primaere Aktion, ein
- * Mint-Button fuer "Offline laden" haette mehr Gewicht als die Sache verdient.
+ * **Abweichung von Blatt `3b`:** dort stehen unter dem Namen zwei sekundaere
+ * Aktionen ("Fuer offline laden" und "Bearbeiten"), und es gibt weder
+ * Auswahlmodus noch FAB noch Suchfeld; die Sektionsueberschrift steht fest
+ * auf "Zuletzt geaendert". Die beiden Aktionen sind ersatzlos entfallen —
+ * sie stehen bereits im Ueberlaufmenue, und zwei Wege zur selben Sache
+ * kosteten oben nur Hoehe. An ihrer Stelle steht dieselbe Filterleiste wie in
+ * der Bibliothek (`Alle · Ungelesen · Favoriten · Archiv`), damit der
+ * Ordner dieselben Fragen beantworten kann wie sie.
  *
- * **Abweichung von Blatt `3b`:** dort gibt es weder Auswahlmodus noch FAB noch
- * Suchfeld, und die Sektionsueberschrift steht fest auf "Zuletzt geaendert".
- * Aufgeraeumt wird aber genau hier — ohne diese Stuecke waere der Ordner der
- * einzige Listen-Screen, in dem man nichts tun kann. Kontextmenue, Sheets und
- * Toast kommen deshalb aus demselben Modul wie in der Bibliothek
- * (`screens/library/documentActions`), die Reihenfolge aus `useLibraryStore`.
- * Das Suchfeld ueber der Sektionsueberschrift fuehrt in die Suche und setzt
- * dabei den Ordnerfilter vorab; die Abstaende von Blatt `3b` darunter bleiben
- * unveraendert.
- *
- * "Alle Dokumente" (`folderName === null`) benutzt denselben Screen: es ist
- * dieselbe Liste mit demselben Kopf, nur ohne Ordnerfarbe und ohne Aktionen —
- * ein zweiter Screen dafuer waere dieselbe Datei mit weniger darin.
+ * Aufgeraeumt wird ebenfalls genau hier — ohne Auswahlmodus, FAB und
+ * Suchfeld waere der Ordner der einzige Listen-Screen, in dem man nichts tun
+ * kann. Kontextmenue, Sheets und Toast kommen deshalb aus demselben Modul wie
+ * in der Bibliothek (`screens/library/documentActions`), die Reihenfolge aus
+ * `useLibraryStore`. Das Suchfeld ueber der Filterleiste fuehrt in die Suche
+ * und setzt dabei den Ordnerfilter vorab; die Abstaende von Blatt `3b`
+ * darunter bleiben unveraendert.
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { FlatList, StyleSheet, View, type ListRenderItemInfo } from 'react-native';
+import { FlatList, ScrollView, StyleSheet, View, type ListRenderItemInfo } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { formatBytes, formatDocumentMeta } from '../../data/format';
 import type { StoredDocument } from '../../data/library';
 import { useGuardedPush } from '../../navigation/useGuardedPush';
-import { isUnread, isVisible, useDocumentStore } from '../../state/documents';
+import { isArchived, isUnread, useDocumentStore } from '../../state/documents';
 import { colorOf, useFolderStore } from '../../state/folders';
-import { isAllSelected, sortDocuments, sortLabels, useLibraryStore } from '../../state/library';
+import {
+  isAllSelected,
+  sortDocuments,
+  sortLabels,
+  useLibraryStore,
+  type LibraryFilter,
+} from '../../state/library';
 import { useUnavailable } from '../../state/network';
 import { useSearchStore } from '../../state/search';
 import { accent, bg, size, space, text as textColor } from '../../theme';
-import { SecondaryButton } from '../../ui/Button';
 import { ContextMenu, type ContextMenuItem } from '../../ui/ContextMenu';
 import { DocCard } from '../../ui/DocCard';
 import { DocRow } from '../../ui/DocRow';
 import { Fab } from '../../ui/Fab';
+import { FilterChip } from '../../ui/FilterChip';
 import {
   ArrowsDownUp,
-  Books,
   CloudCheck,
   CloudSlash,
   Archive,
   CheckCircle,
   Circle,
   DotsThreeVertical,
-  DownloadSimple,
   FileHtml,
   Folder,
   FolderOpen,
   PencilSimple,
   Rows,
   SquaresFour,
+  Star,
   Trash,
   WarningCircle,
 } from '../../ui/icons';
@@ -75,8 +80,7 @@ import { SelectionHeader } from '../library/SelectionHeader';
 import { SortSheet } from '../library/SortSheet';
 
 export interface FolderDetailScreenProps {
-  /** `null` zeigt "Alle Dokumente". */
-  folderName: string | null;
+  folderName: string;
   onBack: () => void;
 }
 
@@ -129,6 +133,16 @@ export function FolderDetailScreen({ folderName, onBack }: FolderDetailScreenPro
   const [importOpen, setImportOpen] = useState(false);
 
   /**
+   * Der Filter ist LOKAL, nicht `activeFilter` aus `useLibraryStore`:
+   * `activeFilter` gehoert der Bibliothek. Wuerde der Ordner ihn mitbenutzen,
+   * stuende die Bibliothek nach einem Blick ins Ordner-Archiv ebenfalls auf
+   * "Archiv", ohne dass der Nutzer sie angefasst hat. Der Ordner startet
+   * deshalb immer auf "Alle" — genauso, wie der Auswahlmodus beim Verlassen
+   * zurueckgesetzt wird.
+   */
+  const [filter, setFilter] = useState<LibraryFilter>('all');
+
+  /**
    * Die Auswahl gilt ueber Screens hinweg, dieser Screen aber nicht: wer
    * zurueckgeht, findet sonst die Bibliothek im Auswahlmodus vor, ohne je
    * dort etwas gewaehlt zu haben.
@@ -136,7 +150,6 @@ export function FolderDetailScreen({ folderName, onBack }: FolderDetailScreenPro
   useEffect(() => endSelection, [endSelection]);
 
   const folder = folders.find((entry) => entry.name === folderName) ?? null;
-  const isAll = folderName === null;
 
   /**
    * "Inhalt offline behalten" gilt laut Blatt `6c` fuer alles im Ordner. Der
@@ -145,7 +158,6 @@ export function FolderDetailScreen({ folderName, onBack }: FolderDetailScreenPro
    * der Speicherbalken in den Einstellungen die Wahrheit zeigt).
    */
   const setFolderKeepOffline = (keep: boolean) => {
-    if (folderName === null) return;
     setFolderOffline(folderName, keep);
     const ids = allDocuments
       .filter((document) => document.folderName === folderName && document.trashedAt === null)
@@ -154,16 +166,34 @@ export function FolderDetailScreen({ folderName, onBack }: FolderDetailScreenPro
   };
 
   const documents = useMemo(() => {
+    // Dieselbe Filterregel wie in der Bibliothek, nur auf diesen Ordner
+    // beschraenkt — die Chips oben beantworten hier dieselben Fragen.
     const list = allDocuments.filter((document) => {
-      // Dieselbe Sichtbarkeitsregel wie in der Bibliothek: kein Papierkorb und
-      // kein Archiv. Das Archiv ist ueber den Chip der Bibliothek erreichbar,
-      // hier waere es eine zweite, abweichende Antwort auf dieselbe Frage.
-      if (!isVisible(document)) return false;
-      if (isAll) return true;
-      return document.folderName === folderName;
+      if (document.trashedAt !== null) return false;
+      if (document.folderName !== folderName) return false;
+      if (filter === 'archive') return isArchived(document);
+      // Archiv ist eine zweite Achse, kein Filterwert: die anderen drei Chips
+      // zeigen nie Archiviertes, sonst stuende es doppelt herum.
+      if (isArchived(document)) return false;
+      if (filter === 'unread') return isUnread(document);
+      if (filter === 'favorites') return document.favorite;
+      return true;
     });
     return sortDocuments(list, sort);
-  }, [allDocuments, folderName, isAll, sort]);
+  }, [allDocuments, filter, folderName, sort]);
+
+  /**
+   * Wie viele Dokumente wirklich im Ordner liegen — unabhaengig vom Chip.
+   * Das Umbenennen wirkt auf alle, nicht nur auf die gerade gezeigten; die
+   * gefilterte `documents` waere dort eine Falschaussage.
+   */
+  const folderCount = useMemo(
+    () =>
+      allDocuments.filter(
+        (document) => document.folderName === folderName && document.trashedAt === null
+      ).length,
+    [allDocuments, folderName]
+  );
 
   /** Was gerade auf dem Schirm steht — Grundlage fuer "Alle auswaehlen". */
   const visibleIds = useMemo(() => documents.map((document) => document.id), [documents]);
@@ -240,45 +270,27 @@ export function FolderDetailScreen({ folderName, onBack }: FolderDetailScreenPro
 
   const header = (
     <View style={styles.head}>
-      {isAll ? (
-        <Books size={32} color={colorOf(folders, null)} weight="fill" />
-      ) : (
+      {/*
+        Icon und Name nebeneinander statt untereinander: der Kopf wird dadurch
+        eine Zeile flacher. Bei zweizeiligen Namen bleibt das Icon bewusst
+        mittig (`center`) — `flex-start` wirkt neben einem Umbruch unruhig.
+      */}
+      <View style={styles.titleRow}>
         <Folder size={32} color={colorOf(folders, folderName)} weight="fill" />
-      )}
-
-      <Text variant="display" numberOfLines={2} style={styles.name}>
-        {isAll ? 'Alle Dokumente' : folderName}
-      </Text>
+        <Text variant="display" numberOfLines={2} style={styles.name}>
+          {folderName}
+        </Text>
+      </View>
 
       <Text variant="caption" tone="secondary" numeric style={styles.meta}>
         {`${documents.length === 1 ? '1 Dokument' : `${documents.length} Dokumente`} · ${formatBytes(totalBytes)}`}
       </Text>
 
-      {isAll ? null : (
-        <View style={styles.actions}>
-          <SecondaryButton
-            compact
-            icon={DownloadSimple}
-            label={keepOffline ? 'Offline geladen' : 'Für offline laden'}
-            onPress={() => setFolderKeepOffline(!keepOffline)}
-            style={styles.actionWide}
-          />
-          <SecondaryButton
-            compact
-            icon={PencilSimple}
-            label="Bearbeiten"
-            onPress={() => setRenameOpen(true)}
-            style={styles.actionFixed}
-          />
-        </View>
-      )}
-
       {/*
         Suchen aus dem Ordner heraus: das Feld ist wie in der Bibliothek nur
         eine Schaltflaeche, setzt aber vorher den Ordnerfilter. Der Chip in der
         Suche nennt den Ordnernamen und bleibt mit einem Tipp abwaehlbar — die
-        Einschraenkung gehoert weiter dem Nutzer. "Alle Dokumente" schraenkt
-        nichts ein, dort waere ein Filter eine Behauptung.
+        Einschraenkung gehoert weiter dem Nutzer.
       */}
       <View style={styles.searchBlock}>
         <SearchField
@@ -289,6 +301,38 @@ export function FolderDetailScreen({ folderName, onBack }: FolderDetailScreenPro
           }}
         />
       </View>
+
+      {/*
+        Dieselbe Filterleiste wie in der Bibliothek, wort- und icon-gleich.
+        Ohne `compact`: hier kollabiert kein Kopf, die Chips sind immer 40 hoch.
+      */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        style={styles.chips}
+        contentContainerStyle={styles.chipRow}
+      >
+        <FilterChip label="Alle" active={filter === 'all'} onPress={() => setFilter('all')} />
+        <FilterChip
+          label="Ungelesen"
+          icon={Circle}
+          active={filter === 'unread'}
+          onPress={() => setFilter('unread')}
+        />
+        <FilterChip
+          label="Favoriten"
+          icon={Star}
+          active={filter === 'favorites'}
+          onPress={() => setFilter('favorites')}
+        />
+        <FilterChip
+          label="Archiv"
+          icon={Archive}
+          active={filter === 'archive'}
+          onPress={() => setFilter('archive')}
+        />
+      </ScrollView>
 
       {/*
         Die Ueberschrift benennt die geltende Reihenfolge, statt "Zuletzt
@@ -328,13 +372,14 @@ export function FolderDetailScreen({ folderName, onBack }: FolderDetailScreenPro
    * als ein Menueeintrag.
    */
   const swipeArchive = (document: StoredDocument) => {
+    // Unter dem Chip "Archiv" stehen archivierte Dokumente in dieser Liste —
+    // die Geste muss deshalb beide Richtungen koennen und richtig melden.
+    const wasArchived = isArchived(document);
     toggleArchived(document.id);
     actions.notify({
-      message: 'Archiviert',
+      message: wasArchived ? 'Aus dem Archiv geholt' : 'Archiviert',
       icon: Archive,
-      // Hier steht nie ein archiviertes Dokument (`isVisible` blendet es aus),
-      // deshalb geht es immer nur in eine Richtung.
-      undo: () => setArchived([document.id], false),
+      undo: () => setArchived([document.id], wasArchived),
     });
   };
 
@@ -384,7 +429,7 @@ export function FolderDetailScreen({ folderName, onBack }: FolderDetailScreenPro
         style={styles.rowWrap}
         right={{
           icon: Archive,
-          label: 'Archiv',
+          label: isArchived(item) ? 'Zurück' : 'Archiv',
           surface: bg.raised,
           tint: textColor.primary,
           onTrigger: () => swipeArchive(item),
@@ -429,13 +474,11 @@ export function FolderDetailScreen({ folderName, onBack }: FolderDetailScreenPro
         <CompactHeader
           onBack={onBack}
           right={
-            isAll ? undefined : (
-              <IconButton
-                icon={DotsThreeVertical}
-                onPress={() => setMenuOpen(true)}
-                accessibilityLabel="Weitere Aktionen"
-              />
-            )
+            <IconButton
+              icon={DotsThreeVertical}
+              onPress={() => setMenuOpen(true)}
+              accessibilityLabel="Weitere Aktionen"
+            />
           }
         />
       </View>
@@ -509,8 +552,7 @@ export function FolderDetailScreen({ folderName, onBack }: FolderDetailScreenPro
       ) : (
         /*
           Ein Import aus dem Ordner heraus landet in DIESEM Ordner — wer hier
-          importiert, hat die Einsortierung schon getroffen. Nur "Alle
-          Dokumente" hat keinen Ordner, dort gilt weiter "landet in Neu".
+          importiert, hat die Einsortierung schon getroffen.
         */
         <Fab onPress={() => setImportOpen(true)} accessibilityLabel="Dokument importieren" />
       )}
@@ -526,11 +568,9 @@ export function FolderDetailScreen({ folderName, onBack }: FolderDetailScreenPro
         visible={importOpen}
         onClose={() => setImportOpen(false)}
         onImported={(document) => {
-          if (!isAll) setFolder([document.id], folderName);
+          setFolder([document.id], folderName);
           actions.notify({
-            message: isAll
-              ? `„${document.title}“ importiert`
-              : `„${document.title}“ nach „${folderName}“ importiert`,
+            message: `„${document.title}“ nach „${folderName}“ importiert`,
             icon: FileHtml,
             undo: () => trashDocuments([document.id]),
           });
@@ -546,8 +586,8 @@ export function FolderDetailScreen({ folderName, onBack }: FolderDetailScreenPro
           title="Ordner umbenennen"
           currentName={folder.name}
           color={folder.color}
-          count={documents.length}
-          hint={`Wirkt auf alle ${documents.length} Dokumente in diesem Ordner`}
+          count={folderCount}
+          hint={`Wirkt auf alle ${folderCount} Dokumente in diesem Ordner`}
           onSubmit={(next) => {
             renameFolder(folder.name, next);
             renameFolderEverywhere(folder.name, next);
@@ -572,29 +612,34 @@ const styles = StyleSheet.create({
   head: {
     paddingHorizontal: size.screenPadding,
   },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space['12'],
+    marginTop: space['8'],
+  },
   name: {
-    marginTop: space['8'] + space['2'],
+    flex: 1,
   },
   meta: {
     marginTop: space['4'],
   },
-  actions: {
-    flexDirection: 'row',
-    gap: space['8'],
-    marginTop: size.screenPadding,
-  },
-  actionWide: {
-    flex: 1,
-  },
-  actionFixed: {
-    // 100 fest aus Blatt `3b` — "Bearbeiten" soll nicht so breit wirken wie
-    // die teurere Entscheidung daneben. Ohne seitlichen Innenabstand, sonst
-    // bleiben fuer Icon und Wort keine 100 mehr uebrig.
-    width: 100,
-    paddingHorizontal: 0,
-  },
   searchBlock: {
     marginTop: size.screenPadding,
+  },
+  chips: {
+    // Derselbe Abstand wie `CHIPS_GAP` der Bibliothek. Eine waagerechte
+    // ScrollView braucht `flexGrow: 0`, sonst beansprucht sie die volle Hoehe.
+    flexGrow: 0,
+    marginTop: space['12'],
+    // Der Kopfblock hat seitlichen Innenabstand; die Chips sollen beim
+    // Scrollen trotzdem bis an den Bildrand laufen.
+    marginHorizontal: -size.screenPadding,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    gap: space['8'],
+    paddingHorizontal: size.screenPadding,
   },
   sectionActions: {
     flexDirection: 'row',

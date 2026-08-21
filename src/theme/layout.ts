@@ -152,9 +152,7 @@ export const size = {
 
   /** Einstellungen (Blatt `3i`): Zeilenhoehe 56-60, Innenabstand 14 */
   settingsRowHeight: 56,
-  /** Speicherbalken: 8 hoch, `radius pill` */
-  storageBarHeight: 8,
-  /** Legendenpunkt neben dem Speicherbalken */
+  /** Legendenpunkt in der Legende der Gruppe "Speicher" */
   legendDot: 8,
 
   /** Regler "Textgroesse im Viewer" (Blatt `6b`) */

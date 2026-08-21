@@ -18,6 +18,7 @@
  * Bildkontrolle gegen den Prototyp — dieselbe Ueberlegung wie bei
  * `DocumentView.web.tsx`.
  */
+import * as Crypto from 'expo-crypto';
 import {
   openDatabaseAsync,
   type SQLiteBindValue,
@@ -34,6 +35,14 @@ export interface Snapshot {
   documents: StoredDocument[];
   folders: LibraryFolder[];
   settings: Record<string, string>;
+  /**
+   * Leseposition je Dokument. Sie steht seit Schema 7 in der Dokumentzeile,
+   * bleibt aber aus dem `StoredDocument` heraus: kein Screen zeigt sie, nur
+   * der Viewer stellt sie wieder her. Als Feld an jedem Dokument muesste sie
+   * durch jede Liste, jeden Filter und die ganze Erstbefuellung mitgeschleppt
+   * werden, ohne dass sie dort je jemand liest.
+   */
+  scrollPositions: Record<string, number>;
 }
 
 /** Alle Spalten, die ein Screen aendern kann. */
@@ -54,6 +63,8 @@ export interface DocumentPatch {
   contentHash?: string | null;
   readAt?: number | null;
   archivedAt?: number | null;
+  /** Leseposition in dp vom Seitenanfang. */
+  scrollOffset?: number;
 }
 
 interface DocumentRow {
@@ -77,6 +88,7 @@ interface DocumentRow {
   content_hash: string | null;
   read_at: number | null;
   archived_at: number | null;
+  scroll_offset: number;
 }
 
 /** Spaltenname je Feld des Patches — die einzige Stelle mit dieser Zuordnung. */
@@ -97,6 +109,7 @@ const columns: Record<keyof DocumentPatch, string> = {
   contentHash: 'content_hash',
   readAt: 'read_at',
   archivedAt: 'archived_at',
+  scrollOffset: 'scroll_offset',
 };
 
 let handle: Promise<SQLiteDatabase> | null = null;
@@ -250,6 +263,11 @@ export async function loadSnapshot(): Promise<Snapshot> {
     db.getAllAsync<{ key: string; value: string }>('SELECT * FROM settings'),
   ]);
 
+  const scrollPositions: Record<string, number> = {};
+  for (const row of documentRows) {
+    if (row.scroll_offset > 0) scrollPositions[row.id] = row.scroll_offset;
+  }
+
   return {
     documents: documentRows.map(toDocument),
     folders: folderRows.map((row) => ({
@@ -258,6 +276,7 @@ export async function loadSnapshot(): Promise<Snapshot> {
       keepOffline: row.keep_offline === 1,
     })),
     settings: Object.fromEntries(settingRows.map((row) => [row.key, row.value])),
+    scrollPositions,
   };
 }
 
@@ -314,10 +333,24 @@ export async function deleteDocuments(ids: string[]): Promise<void> {
   await db.runAsync(`DELETE FROM documents WHERE id IN (${placeholders})`, ids);
 }
 
+/**
+ * Ordner anlegen oder aendern.
+ *
+ * Bewusst KEIN `INSERT OR REPLACE`: das ersetzt die ganze Zeile und setzt
+ * dabei `remote_id` auf NULL zurueck, weil der Aufrufer den Ausweis oben gar
+ * nicht kennt. Danach waere der Ordner oben nicht mehr auffindbar, jeder Push
+ * legte eine zweite Zeile an, und die Dokument-Eintraege in der Outbox haetten
+ * wieder keinen Ordner, auf den sie zeigen koennten — genau der Grund, aus dem
+ * der Sync-Status auf "Änderungen offen" stehen blieb. `ON CONFLICT` fasst nur
+ * die beiden Spalten an, die der Nutzer bearbeitet.
+ */
 export async function upsertFolder(folder: LibraryFolder): Promise<void> {
   const db = await database();
   await db.runAsync(
-    'INSERT OR REPLACE INTO folders (name, color, keep_offline) VALUES (?, ?, ?)',
+    `INSERT INTO folders (name, color, keep_offline) VALUES (?, ?, ?)
+     ON CONFLICT(name) DO UPDATE SET
+       color = excluded.color,
+       keep_offline = excluded.keep_offline`,
     [folder.name, folder.color, folder.keepOffline ? 1 : 0]
   );
 }
@@ -349,9 +382,29 @@ export async function deleteFolder(name: string): Promise<void> {
   const db = await database();
   await db.withTransactionAsync(async () => {
     await db.runAsync('UPDATE documents SET folder_name = NULL WHERE folder_name = ?', [name]);
+    // Der Grabstein muss VOR dem Loeschen geschrieben werden — danach gibt es
+    // die Zeile nicht mehr, aus der sich das `remote_id` lesen liesse. Ordner,
+    // die nie oben waren, hinterlassen keinen: dort gibt es nichts zu loeschen.
+    await db.runAsync(
+      `INSERT OR REPLACE INTO folder_deletions (remote_id, queued_at)
+       SELECT remote_id, ? FROM folders WHERE name = ? AND remote_id IS NOT NULL`,
+      [Date.now(), name]
+    );
     await db.runAsync('DELETE FROM folders WHERE name = ?', [name]);
   });
 }
+
+/**
+ * Der `settings`-Schluessel, unter dem die Lesepositionen liegen — ein
+ * JSON-Objekt `{ dokumentId: offset }` (siehe `state/viewer.ts`).
+ *
+ * Er steht hier und nicht dort, weil die ID-Wanderung ihn mitziehen muss: die
+ * Positionen sind nach der Dokumentkennung geschluesselt, und eine neue Kennung
+ * ohne diesen Schritt hiesse, dass jedes gewanderte Dokument wieder oben
+ * anfaengt. Wuerde das Repository ihn aus `state/viewer.ts` holen, entstuende
+ * ein Modulzyklus — dort wird bereits `setSetting` von hier importiert.
+ */
+export const SETTING_SCROLL_POSITIONS = 'viewer.scrollPositions';
 
 export async function setSetting(key: string, value: string): Promise<void> {
   const db = await database();
@@ -379,6 +432,12 @@ const PUSHABLE: (keyof DocumentPatch)[] = [
   'lastOpenedAt',
   'readAt',
   'archivedAt',
+  // Die Leseposition gehoert zum Dokument und geht deshalb denselben Weg wie
+  // "gelesen". Sie erreicht die Outbox nur gedrosselt — `state/viewer.ts`
+  // schreibt beim Verlassen des Viewers und beim Wechsel in den Hintergrund,
+  // nicht bei jedem Scrollschritt. Sonst stuende die Outbox beim Lesen eines
+  // langen Dokuments dauernd voll und der Status sprunge hin und her.
+  'scrollOffset',
 ];
 
 /** Ein offener Eintrag, mit allem, was `pushChanges` daraus bauen muss. */
@@ -389,6 +448,11 @@ export interface OutboxEntry {
   document: StoredDocument;
   /** Ausweis des Ordners oben; `null`, wenn der Ordner nur lokal existiert. */
   folderRemoteId: string | null;
+  /**
+   * Leseposition. Sie steht neben dem Dokument und nicht darin, aus demselben
+   * Grund wie in `Snapshot`: kein Screen zeigt sie.
+   */
+  scrollOffset: number;
 }
 
 interface OutboxRow extends DocumentRow {
@@ -470,6 +534,7 @@ export async function readOutbox(): Promise<OutboxEntry[]> {
     queuedAt: row.outbox_queued_at,
     document: toDocument(row),
     folderRemoteId: row.folder_remote_id,
+    scrollOffset: row.scroll_offset,
   }));
 }
 
@@ -503,6 +568,79 @@ export async function countOutbox(): Promise<number> {
   return rows[0]?.count ?? 0;
 }
 
+// ── Ordner: der Weg nach oben ───────────────────────────────────────────────
+
+/**
+ * Warum die Ordner KEINE Outbox haben.
+ *
+ * Bei einer Handvoll Ordner ist der direkte Vergleich mit oben der einfachere
+ * richtige Weg: `readFoldersForPush` liefert den ganzen Bestand, der Push
+ * gleicht ab. Eine zweite Outbox waere Buchhaltung ueber eine Menge, die man
+ * ohnehin in einem Zug lesen kann — und sie muesste dieselbe Regel noch einmal
+ * abbilden, die hier schon gilt: der Name ist der Ausweis (siehe Kopf von
+ * `schema.ts`).
+ *
+ * Genau ein Fall entzieht sich dem Vergleich, das Loeschen — dafuer gibt es
+ * `folder_deletions`.
+ */
+export interface FolderForPush {
+  name: string;
+  /** Hex-Wert wie im Zustand; die Uebersetzung in den Token-Namen macht der Push. */
+  color: string;
+  keepOffline: boolean;
+  /** Ausweis derselben Zeile oben; `null`, wenn der Ordner nur lokal existiert. */
+  remoteId: string | null;
+}
+
+export async function readFoldersForPush(): Promise<FolderForPush[]> {
+  const db = await database();
+  const rows = await db.getAllAsync<{
+    name: string;
+    color: string;
+    keep_offline: number;
+    remote_id: string | null;
+  }>('SELECT name, color, keep_offline, remote_id FROM folders ORDER BY name ASC');
+
+  return rows.map((row) => ({
+    name: row.name,
+    color: row.color,
+    keepOffline: row.keep_offline === 1,
+    remoteId: row.remote_id,
+  }));
+}
+
+/**
+ * Den Ausweis von oben an der lokalen Zeile festhalten.
+ *
+ * Ohne diesen Schritt legte der naechste Push denselben Ordner ein zweites Mal
+ * an, und die Dokument-Eintraege in der Outbox faenden weiterhin kein
+ * `folder_id`.
+ */
+export async function setFolderRemoteId(name: string, remoteId: string): Promise<void> {
+  const db = await database();
+  await db.runAsync('UPDATE folders SET remote_id = ? WHERE name = ?', [remoteId, name]);
+}
+
+/** Die Grabsteine, die der naechste Push oben auf `deleted_at` setzen muss. */
+export async function readFolderDeletions(): Promise<string[]> {
+  const db = await database();
+  const rows = await db.getAllAsync<{ remote_id: string }>(
+    'SELECT remote_id FROM folder_deletions ORDER BY queued_at ASC'
+  );
+  return rows.map((row) => row.remote_id);
+}
+
+/** Erledigte Grabsteine wegraeumen — nur die, die oben wirklich durchkamen. */
+export async function clearFolderDeletions(remoteIds: string[]): Promise<void> {
+  if (remoteIds.length === 0) return;
+  const db = await database();
+  const placeholders = remoteIds.map(() => '?').join(', ');
+  await db.runAsync(
+    `DELETE FROM folder_deletions WHERE remote_id IN (${placeholders})`,
+    remoteIds
+  );
+}
+
 
 /**
  * Was der Abgleich sich merkt. Zwei Schluessel, beide in `sync_state`:
@@ -512,8 +650,24 @@ export async function countOutbox(): Promise<number> {
  *                   und beides laesst Zeilen verschwinden.
  *   reset_done      Ob der einmalige Schnitt vom Beispiel-Bestand auf den
  *                   echten schon gelaufen ist.
+ *   uuid_ids_done   Ob die einmalige Wanderung der lokalen Import-Kennungen
+ *                   auf UUIDs gelaufen ist (`migrateLocalIdsToUuid`).
+ *   scroll_moved    Ob die Lesepositionen einmalig aus `settings` in die
+ *                   Dokumentzeile gewandert sind (`adoptScrollPositions`).
+ *   settings_pushed Die Voreinstellungen, wie sie zuletzt oben ankamen — als
+ *                   JSON. Ohne diesen Vergleich schoebe jedes Geraet bei jedem
+ *                   Abgleich seinen alten Stand ueber den neuen des anderen.
+ *   owner_id        Unter welcher Identitaet der letzte Abruf lief. Aendert sie
+ *                   sich (Anmeldung mit E-Mail, Abmelden), sind Wasserzeichen
+ *                   und Ordner-Ausweise Aussagen ueber ein fremdes Konto.
  */
-export type SyncStateKey = 'last_pulled_at' | 'reset_done';
+export type SyncStateKey =
+  | 'last_pulled_at'
+  | 'reset_done'
+  | 'uuid_ids_done'
+  | 'scroll_moved'
+  | 'settings_pushed'
+  | 'owner_id';
 
 export async function readSyncState(key: SyncStateKey): Promise<string | null> {
   const db = await database();
@@ -527,6 +681,336 @@ export async function readSyncState(key: SyncStateKey): Promise<string | null> {
 export async function writeSyncState(key: SyncStateKey, value: string): Promise<void> {
   const db = await database();
   await db.runAsync('INSERT OR REPLACE INTO sync_state (key, value) VALUES (?, ?)', [key, value]);
+}
+
+// ── Dokumente vom Handy nach oben ───────────────────────────────────────────
+
+/** Sieht eine Kennung nach einer UUID aus? */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Die einmalige Wanderung der lokalen Import-Kennungen auf UUIDs.
+ *
+ * Frueher hiessen sie `doc-import-mf3x…`; oben ist `public.documents.id` eine
+ * `uuid`. Solche Zeilen konnten deshalb prinzipiell nie hochgehen — sie
+ * existierten ausschliesslich auf diesem Geraet, still und ohne Hinweis in der
+ * Oberflaeche.
+ *
+ * Warum das keine Migration in `schema.ts` ist: dort steht ausschliesslich SQL,
+ * und hier muss je Zeile eine neue Kennung erzeugt und an drei weiteren
+ * Stellen nachgezogen werden. Abgesichert ist der Lauf ueber `sync_state`
+ * (`uuid_ids_done`) und nicht ueber `user_version`: ein zweiter Lauf waere
+ * harmlos, aber die Absicht "genau einmal" gehoert dorthin, wo sie nachlesbar
+ * ist.
+ *
+ * `cache_key` bleibt bewusst unveraendert: die Datei im Cache wird nicht
+ * umbenannt. Wo sie liegt, ist eine Frage dieses Geraets — und ein
+ * Dateisystemlauf ueber Hunderte Dokumente waere ein Risiko ohne Gegenwert.
+ *
+ * Der Suchindex braucht nichts: er liegt im Arbeitsspeicher und wird nach
+ * diesem Lauf erst gefuellt (`warmSearchIndex` in `state/hydrate.ts`).
+ *
+ * Rueckgabe ist die Zahl gewanderter Zeilen — fuer das Protokoll, nicht fuer
+ * die Oberflaeche.
+ */
+export async function migrateLocalIdsToUuid(): Promise<number> {
+  if ((await readSyncState('uuid_ids_done')) !== null) return 0;
+
+  const db = await database();
+  // Nur Zeilen, die nie oben waren. Alles mit `storage_path` traegt bereits
+  // die Kennung, unter der es dort steht — die darf sich nie aendern.
+  const rows = await db.getAllAsync<{ id: string }>(
+    'SELECT id FROM documents WHERE storage_path IS NULL'
+  );
+  const stale = rows.filter((row) => !UUID.test(row.id));
+
+  for (const row of stale) {
+    const next = Crypto.randomUUID();
+    await db.withTransactionAsync(async () => {
+      // `PRAGMA foreign_keys` steht auf ON, und `outbox.document_id` zeigt auf
+      // `documents(id)` — beim Umschreiben der Elternzeile haenge der Eintrag
+      // sonst in der Luft. Er wird deshalb gemerkt, entfernt und unter der
+      // neuen Kennung wieder eingetragen; `queued_at` bleibt stehen, damit
+      // `clearOutbox` ihn spaeter wiedererkennt.
+      const open = await db.getAllAsync<{ fields: string; queued_at: number }>(
+        'SELECT fields, queued_at FROM outbox WHERE document_id = ?',
+        [row.id]
+      );
+      await db.runAsync('DELETE FROM outbox WHERE document_id = ?', [row.id]);
+      await db.runAsync('UPDATE documents SET id = ? WHERE id = ?', [next, row.id]);
+
+      const entry = open[0];
+      if (entry !== undefined) {
+        await db.runAsync(
+          'INSERT INTO outbox (document_id, fields, queued_at) VALUES (?, ?, ?)',
+          [next, entry.fields, entry.queued_at]
+        );
+      }
+
+      await moveScrollPosition(db, row.id, next);
+    });
+  }
+
+  await writeSyncState('uuid_ids_done', new Date().toISOString());
+  return stale.length;
+}
+
+/**
+ * Die Leseposition auf die neue Kennung umhaengen.
+ *
+ * Ohne diesen Schritt faenge jedes gewanderte Dokument wieder oben an — die
+ * Positionen liegen als ein JSON-Objekt in `settings`, geschluesselt nach der
+ * Dokumentkennung (siehe `state/viewer.ts`).
+ */
+async function moveScrollPosition(
+  db: SQLiteDatabase,
+  from: string,
+  to: string
+): Promise<void> {
+  const rows = await db.getAllAsync<{ value: string }>(
+    'SELECT value FROM settings WHERE key = ?',
+    [SETTING_SCROLL_POSITIONS]
+  );
+  const raw = rows[0]?.value;
+  if (raw === undefined) return;
+
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== 'object') return;
+    const positions = parsed as Record<string, unknown>;
+    if (!(from in positions)) return;
+
+    positions[to] = positions[from];
+    delete positions[from];
+    await db.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [
+      SETTING_SCROLL_POSITIONS,
+      JSON.stringify(positions),
+    ]);
+  } catch {
+    // Kaputtes JSON ist kein Grund, die Wanderung abzubrechen: dann faengt das
+    // Dokument eben wieder oben an. `state/viewer.ts` verwirft es ohnehin.
+  }
+}
+
+/**
+ * Die einmalige Uebernahme der Lesepositionen aus `settings` in die
+ * Dokumentzeile.
+ *
+ * Bis Schema 6 lagen sie als ein JSON-Objekt unter einem `settings`-Schluessel
+ * — ein Wert ueber ein Dokument, der nicht am Dokument hing und deshalb auch
+ * nie mit ihm nach oben ging. Nach dem Umzug ist das eine Spalte wie jede
+ * andere und laeuft ueber die vorhandene Outbox mit.
+ *
+ * Bewusst OHNE Outbox-Eintrag: das waere ein Schwung Eintraege fuer Positionen,
+ * die der Nutzer nie neu gesetzt hat. Sie gehen mit, sobald das Dokument das
+ * naechste Mal gelesen wird.
+ *
+ * Laeuft nach `migrateLocalIdsToUuid`: die Kennungen im JSON-Objekt muessen
+ * schon die neuen sein, sonst trifft das UPDATE keine Zeile.
+ */
+export async function adoptScrollPositions(): Promise<number> {
+  if ((await readSyncState('scroll_moved')) !== null) return 0;
+
+  const db = await database();
+  const rows = await db.getAllAsync<{ value: string }>(
+    'SELECT value FROM settings WHERE key = ?',
+    [SETTING_SCROLL_POSITIONS]
+  );
+
+  let moved = 0;
+  const raw = rows[0]?.value;
+  if (raw !== undefined) {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (parsed !== null && typeof parsed === 'object') {
+        const entries = Object.entries(parsed as Record<string, unknown>).filter(
+          (entry): entry is [string, number] =>
+            typeof entry[1] === 'number' && Number.isFinite(entry[1])
+        );
+        await db.withTransactionAsync(async () => {
+          for (const [id, offset] of entries) {
+            await db.runAsync('UPDATE documents SET scroll_offset = ? WHERE id = ?', [
+              Math.max(0, Math.round(offset)),
+              id,
+            ]);
+          }
+          // Der alte Eintrag geht im selben Zug: zwei Wahrheiten ueber dieselbe
+          // Stelle waeren schlimmer als keine.
+          await db.runAsync('DELETE FROM settings WHERE key = ?', [SETTING_SCROLL_POSITIONS]);
+        });
+        moved = entries.length;
+      }
+    } catch {
+      // Kaputtes JSON ist kein Grund, den Start abzubrechen — dann faengt jedes
+      // Dokument eben wieder oben an.
+    }
+  }
+
+  await writeSyncState('scroll_moved', new Date().toISOString());
+  return moved;
+}
+
+// ── Voreinstellungen: der Weg in beide Richtungen ───────────────────────────
+
+/**
+ * Welche `settings`-Schluessel zum KONTO gehoeren und nicht zum Geraet.
+ *
+ * Textgroesse, Abdunkeln, Bildschirm anlassen, Darstellung und Sortierung
+ * beschreiben, wie der Nutzer lesen will — das gilt auf jedem seiner Geraete.
+ *
+ * Ausdruecklich NICHT dabei:
+ *
+ *   search.recentQueries    was hier zuletzt gesucht wurde, ist ein Verlauf
+ *                           dieses Geraets und keine Voreinstellung
+ *   viewer.scrollPositions  gibt es seit Schema 7 nicht mehr — die Position
+ *                           steht in der Dokumentzeile
+ */
+export const SYNCED_SETTING_KEYS = [
+  'appearance.viewerTextScale',
+  'appearance.dimDocuments',
+  'appearance.keepScreenOn',
+  'library.viewMode',
+  'library.sort',
+];
+
+export async function readSettings(keys: string[]): Promise<Record<string, string>> {
+  if (keys.length === 0) return {};
+  const db = await database();
+  const placeholders = keys.map(() => '?').join(', ');
+  const rows = await db.getAllAsync<{ key: string; value: string }>(
+    `SELECT key, value FROM settings WHERE key IN (${placeholders})`,
+    keys
+  );
+  return Object.fromEntries(rows.map((row) => [row.key, row.value]));
+}
+
+/** Mehrere Voreinstellungen in einem Zug — der Abruf bringt sie gebuendelt. */
+export async function writeSettings(entries: Record<string, string>): Promise<void> {
+  const keys = Object.keys(entries);
+  if (keys.length === 0) return;
+  const db = await database();
+  await db.withTransactionAsync(async () => {
+    for (const key of keys) {
+      await db.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [
+        key,
+        entries[key],
+      ]);
+    }
+  });
+}
+
+/**
+ * Was noch nie oben war und hochgeladen werden kann.
+ *
+ * Vier Bedingungen, jede aus einem eigenen Grund:
+ *
+ *   storage_path IS NULL   war noch nie oben — alles andere ist dort bekannt
+ *   trashed_at IS NULL     der Papierkorb ist kein Bestand; was der Nutzer
+ *                          weggeworfen hat, gehoert nicht hochgeladen
+ *   cache_key IS NOT NULL  ohne Datei gaebe es nichts hochzuladen
+ *   source != 'sample'     der Beispiel-Bestand ist Erstbefuellung und kein
+ *                          Bestand (CLAUDE.md); oben laesst die CHECK-Bedingung
+ *                          `sample` ohnehin nicht zu
+ */
+export interface UploadableDocument {
+  document: StoredDocument;
+  /** Ausweis des Ordners oben; `null`, wenn ohne Ordner oder nur lokal bekannt. */
+  folderRemoteId: string | null;
+  /** Leseposition — siehe `OutboxEntry`. */
+  scrollOffset: number;
+}
+
+interface UploadableRow extends DocumentRow {
+  folder_remote_id: string | null;
+}
+
+export async function readUploadable(): Promise<UploadableDocument[]> {
+  const db = await database();
+  const rows = await db.getAllAsync<UploadableRow>(
+    `SELECT d.*, f.remote_id AS folder_remote_id
+       FROM documents d LEFT JOIN folders f ON f.name = d.folder_name
+      WHERE d.storage_path IS NULL
+        AND d.trashed_at IS NULL
+        AND d.cache_key IS NOT NULL
+        AND d.source <> 'sample'
+      ORDER BY d.imported_at ASC`
+  );
+
+  return rows.map((row) => ({
+    document: toDocument(row),
+    folderRemoteId: row.folder_remote_id,
+    scrollOffset: row.scroll_offset,
+  }));
+}
+
+/**
+ * Nach dem Hochladen: die Zeile weiss jetzt, wo ihre Datei oben liegt.
+ *
+ * Bewusst OHNE Outbox-Eintrag (deshalb nicht ueber `updateDocuments`): beide
+ * Spalten beschreiben die Datei oben und kommen von dort — sie zurueck nach
+ * oben zu schicken waere ein Echo. Und `content_hash` muss stehen, sonst
+ * erklaert der naechste Abruf die gerade hochgeladene Datei fuer veraltet
+ * (`applyRemote` vergleicht die Pruefsummen).
+ *
+ * Ab hier laeuft die Zeile den normalen Outbox-Weg wie jedes PC-Dokument:
+ * `queueForPush` nimmt sie auf, weil `storage_path` nicht mehr NULL ist.
+ */
+export async function markUploaded(
+  id: string,
+  storagePath: string,
+  contentHash: string
+): Promise<void> {
+  const db = await database();
+  await db.runAsync('UPDATE documents SET storage_path = ?, content_hash = ? WHERE id = ?', [
+    storagePath,
+    contentHash,
+    id,
+  ]);
+}
+
+/**
+ * Festhalten, unter welcher Identitaet abgeglichen wird — und aufraeumen, wenn
+ * es eine andere ist als beim letzten Mal.
+ *
+ * Was nach einem Identitaetswechsel nicht mehr gilt:
+ *
+ * `folders.remote_id` zeigt auf Zeilen eines anderen Kontos. RLS laesst ein
+ * `update` darauf nicht scheitern — es trifft schlicht keine Zeile und meldet
+ * Erfolg. Der Ordner ginge damit nie oben an, und niemand erfuehre es. Ohne
+ * Ausweis sucht `pushFolders` wieder ueber den Namen und legt an, was fehlt.
+ *
+ * Die Grabsteine gehen aus demselben Grund: eine Loeschung im alten Konto
+ * nachzuholen waere ein Eingriff in fremde Daten. Und `settings_pushed` gilt
+ * nicht mehr: was das alte Konto zuletzt bekam, sagt nichts ueber das neue.
+ *
+ * Der Bestand selbst bleibt unangetastet — die lokale Datenbank ist die
+ * Wahrheitsquelle, und ein Kontowechsel ist kein Grund, Dokumente zu
+ * verlieren. Was frueher schon oben lag, bleibt dort allerdings liegen: seine
+ * Zeile gehoert dem alten Konto, und der neue Bestand kennt sie nicht.
+ *
+ * Rueckgabe: ob wirklich gewechselt wurde. Beim allerersten Lauf steht noch
+ * gar keine Identitaet fest — das ist kein Wechsel und raeumt nichts auf.
+ */
+export async function noteOwner(userId: string): Promise<boolean> {
+  const previous = await readSyncState('owner_id');
+  if (previous === userId) return false;
+
+  const db = await database();
+  if (previous !== null) {
+    await db.withTransactionAsync(async () => {
+      await db.runAsync('UPDATE folders SET remote_id = NULL');
+      await db.runAsync('DELETE FROM folder_deletions');
+      await db.runAsync('DELETE FROM sync_state WHERE key IN (?, ?)', [
+        'last_pulled_at',
+        // Was das alte Konto zuletzt bekam, sagt nichts darueber, was das neue
+        // schon hat — sonst schickte der naechste Push die Voreinstellungen gar
+        // nicht erst hoch.
+        'settings_pushed',
+      ]);
+    });
+  }
+  await writeSyncState('owner_id', userId);
+  return previous !== null;
 }
 
 /**
@@ -550,6 +1034,7 @@ export interface RemoteFolder {
   remoteId: string;
   name: string;
   color: string;
+  keepOffline: boolean;
   deleted: boolean;
 }
 
@@ -574,6 +1059,7 @@ export interface RemoteDocument {
   contentHash: string | null;
   readAt: number | null;
   archivedAt: number | null;
+  scrollOffset: number;
 }
 
 export interface RemoteSnapshot {
@@ -644,10 +1130,17 @@ export async function applyRemote(snapshot: RemoteSnapshot): Promise<void> {
         ]);
       }
 
+      // `keep_offline` kommt seit dem Ordner-Push von oben mit: es ist eine
+      // Entscheidung des Nutzers ueber den Ordner, keine Eigenschaft dieses
+      // Geraets. Hart eine 0 einzusetzen hiesse, sie auf jedem weiteren Geraet
+      // stillschweigend zurueckzunehmen.
       await db.runAsync(
-        `INSERT INTO folders (name, color, keep_offline, remote_id) VALUES (?, ?, 0, ?)
-         ON CONFLICT(name) DO UPDATE SET color = excluded.color, remote_id = excluded.remote_id`,
-        [folder.name, folder.color, folder.remoteId]
+        `INSERT INTO folders (name, color, keep_offline, remote_id) VALUES (?, ?, ?, ?)
+         ON CONFLICT(name) DO UPDATE SET
+           color = excluded.color,
+           keep_offline = excluded.keep_offline,
+           remote_id = excluded.remote_id`,
+        [folder.name, folder.color, folder.keepOffline ? 1 : 0, folder.remoteId]
       );
     }
 
@@ -664,8 +1157,9 @@ export async function applyRemote(snapshot: RemoteSnapshot): Promise<void> {
         `INSERT INTO documents
            (id, title, doc_type, folder_name, favorite, cached, size_bytes, updated_at,
             imported_at, open_count, last_opened_at, note, keep_offline, trashed_at,
-            source, cache_key, storage_path, content_hash, read_at, archived_at)
-         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
+            source, cache_key, storage_path, content_hash, read_at, archived_at,
+            scroll_offset)
+         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            -- Die Nutzerfelder nur, solange kein Eintrag in der Outbox offen
            -- ist: sonst naehme der Abruf zurueck, was gerade offline gewischt
@@ -680,6 +1174,7 @@ export async function applyRemote(snapshot: RemoteSnapshot): Promise<void> {
            last_opened_at = ${mine('last_opened_at')},
            read_at = ${mine('read_at')},
            archived_at = ${mine('archived_at')},
+           scroll_offset = ${mine('scroll_offset')},
            -- Technische Felder kommen immer vom Server: sie beschreiben die
            -- Datei oben, nicht die Ablage hier. Bliebe der Dateicache auf
            -- einem veralteten Hash stehen, holte der Viewer nie neu.
@@ -716,6 +1211,7 @@ export async function applyRemote(snapshot: RemoteSnapshot): Promise<void> {
           document.contentHash,
           document.readAt,
           document.archivedAt,
+          document.scrollOffset,
         ]
       );
     }

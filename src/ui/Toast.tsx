@@ -29,7 +29,7 @@ import type { Icon } from './icons';
 import { Text } from './Text';
 
 /** Standzeit aus dem Komponenten-Inventar. */
-export const TOAST_DURATION = 5000;
+export const TOAST_DURATION = 2500;
 
 export interface ToastProps {
   message: string;

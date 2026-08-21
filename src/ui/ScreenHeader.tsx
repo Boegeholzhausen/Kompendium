@@ -83,6 +83,13 @@ const styles = StyleSheet.create({
     paddingRight: size.screenPadding,
     paddingTop: space['8'],
     paddingBottom: space['12'],
+    // Ohne `right` gaebe nur der Titel die Zeilenhoehe vor (36 statt 48) — der
+    // Kopf waere kuerzer und der Titel saesse hoeher als in `3a` (Ordner), wo
+    // die Schaltflaeche die Zeile auf 48 zieht. `minHeight` zaehlt beim
+    // Border-Box hier inklusive Innenabstand, deshalb die volle Summe wie in
+    // `TITLE_BAR_EXPANDED` (Bibliothek) — sonst reicht sie schon durch den
+    // Text allein (8 + 36 + 12 = 56) und greift nicht.
+    minHeight: space['8'] + size.touchTarget + space['12'],
   },
   title: {
     flex: 1,

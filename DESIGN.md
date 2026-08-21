@@ -985,13 +985,6 @@ Keine Bilddateien. Alles ist Typografie, Fläche, Linie und Icon-Font:
   `#F6F5F1`, Georgia, Akzent `#9A7B2F`, `src/data/sampleDocumentHtml.ts`) und
   **nicht** Teil des Designsystems.
 
-## Abnahmeblätter
-
-Unter `src/dev/`, erreichbar über **Einstellungen > Abnahmeblätter**:
-**Tokens** (`TokenSheet`), **Kacheln** (`TileSheet`), **Komponenten**
-(`ComponentSheet`). Dienen dem Soll-Ist-Vergleich gegen das
-Handoff-Dokument und fallen in einer ausgelieferten Fassung weg.
-
 ## Referenz — Anker im Original-Prototyp
 
 `Kompendium.dc.html`, sechs Abschnitte, neueste Runde oben; Anker-IDs

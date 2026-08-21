@@ -53,9 +53,19 @@ await wait(500);
 await page.getByLabel(/^Ordner Finanzen/).click();
 await shot('04-ordner-detail');
 
-// Umbenennen-Sheet ueber "Bearbeiten". Frueher fuehrte hier der Weg ueber die
-// Tag-Verwaltung; die gibt es nicht mehr, das Sheet ist dasselbe geblieben.
-await page.getByText('Bearbeiten', { exact: true }).click();
+// Filterleiste des Ordners — seit dem schlanken Kopf steht sie an der Stelle
+// der beiden fruehereren Aktionen.
+await page.getByText('Archiv', { exact: true }).first().click();
+await shot('04b-ordner-archiv');
+await page.getByText('Alle', { exact: true }).first().click();
+await wait(400);
+
+// Umbenennen-Sheet ueber das Ueberlaufmenue. Frueher fuehrte hier der Weg
+// ueber "Bearbeiten" im Kopf, davor ueber die Tag-Verwaltung; das Sheet ist
+// dasselbe geblieben.
+await page.getByLabel('Weitere Aktionen').click();
+await wait(400);
+await page.getByText('Ordner umbenennen', { exact: true }).click();
 await wait(400);
 await shot('05-umbenennen');
 await page.keyboard.press('Escape');

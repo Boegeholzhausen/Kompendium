@@ -37,9 +37,9 @@ Was das Skript anlegt (und was du danach prüfen kannst):
 
 | Bestandteil | Wozu | Wo prüfen |
 |---|---|---|
-| Tabellen `folders`, `documents` | Datenmodell der App (Ablage im Storage, Ordnung in diesen Tabellen — trennt sich bewusst) | **Table Editor** |
+| Tabellen `folders`, `documents`, `user_settings` | Datenmodell der App (Ablage im Storage, Ordnung in diesen Tabellen — trennt sich bewusst) | **Table Editor** |
 | Volltextsuche deutsch auf `documents.search_vector` (generierte Spalte, gewichtet: Titel > Beschreibung > Vorschautext) + GIN-Index | Suche findet auch gebeugte Wortformen | **Database → Indexes** |
-| `touch_updated_at`-Trigger auf allen vier Tabellen | Zeitstempel wird bei jedem Update automatisch gesetzt, das Pull-Wasserzeichen der App verlässt sich darauf | **Database → Triggers** |
+| `touch_updated_at`-Trigger auf allen Tabellen | Zeitstempel wird bei jedem Update automatisch gesetzt, das Pull-Wasserzeichen der App verlässt sich darauf | **Database → Triggers** |
 | RLS-Policies (`<tabelle>_owner`) auf `owner_id = auth.uid()` | Jeder Nutzer sieht ausschließlich eigene Zeilen | **Authentication → Policies** |
 | Privater Bucket `documents` + vier Pfad-Policies (`documents_read/write/update/delete`) | HTML-Dateien liegen flach unter `documents/<user-id>/<dokument-id>.html`, fremde Ordner sind gesperrt | **Storage** |
 
@@ -64,7 +64,39 @@ Die App meldet Nutzer beim ersten Start still und ohne Registrierung an. Dafür 
 2. Den Eintrag **Anonymous sign-ins** suchen und **einschalten**.
 3. **Save**.
 
-Zum Verständnis: Ein anonymer Nutzer bekommt eine echte, dauerhafte User-ID. Genau die landet als `owner_id` in deinen Zeilen, und genau darauf greift RLS zu. Kein Passwort, aber trotzdem sauber isolierte Daten. Später kann so ein Account in einen echten mit E-Mail umgewandelt werden, ohne dass Daten verloren gehen.
+Zum Verständnis: Ein anonymer Nutzer bekommt eine echte, dauerhafte User-ID. Genau die landet als `owner_id` in deinen Zeilen, und genau darauf greift RLS zu. Kein Passwort, aber trotzdem sauber isolierte Daten. Genau dieser Account wird im nächsten Schritt mit einer E-Mail verknüpft — er wird dabei **nicht ersetzt**, und deshalb geht nichts verloren.
+
+### 1.7 E-Mail-Anmeldung aktivieren
+
+Solange die App nur anonym anmeldet, hat **jede Installation eine eigene** `auth.uid()`. RLS filtert auf `owner_id = auth.uid()` — ein zweites Gerät sieht deshalb einen leeren Bestand, egal wie gut der Abgleich funktioniert. Die E-Mail ist der Weg, aus der Geräte-Identität ein Konto zu machen, an dem sich ein zweites Gerät anmelden kann.
+
+1. **Authentication** → **Sign In / Providers**.
+2. **Email** einschalten und speichern.
+3. Bei **Confirm email** die Bestätigung **eingeschaltet lassen** — genau diese Mail trägt den Code.
+4. Unter **Authentication → Emails** (teils **Email Templates**) prüfen, dass die Vorlagen **Confirm signup**, **Magic Link** und **Change Email Address** den Platzhalter `{{ .Token }}` enthalten. Die Standardvorlagen von Supabase enthalten nur `{{ .ConfirmationURL }}`; ergänze eine Zeile, etwa:
+
+   ```
+   <p>Dein Code: <strong>{{ .Token }}</strong></p>
+   ```
+
+   Warum der Code und nicht der Link: ein Link müsste über einen Deep-Link zurück in die App führen, und das bedient Expo Go nicht verlässlich. Der sechsstellige Code aus derselben Mail funktioniert überall — abtippen, fertig. (Steht so auch als Begründung in `src/data/supabase.ts`.)
+
+### 1.8 Ablauf: Erstgerät verknüpfen → Zweitgerät anmelden
+
+**Erstgerät** (das mit dem Bestand):
+
+1. **Einstellungen → Konto**. Dort steht „Nicht verknüpft · nur auf diesem Gerät".
+2. **Gerät verknüpfen** antippen, E-Mail-Adresse eingeben, **Code anfordern**.
+3. Code aus der Mail eintippen, **Bestätigen**. Die Zeile zeigt danach die Adresse.
+4. Kontrolle im Dashboard unter **Authentication → Users**: es muss **dieselbe User-ID** sein wie vorher, jetzt mit `is_anonymous = false`. Käme dort eine zweite Kennung hinzu, wären die alten Zeilen verwaist — die App verknüpft deshalb bewusst über `updateUser` und meldet sich nicht neu an.
+
+**Zweitgerät** (oder nach „App-Daten löschen"):
+
+1. **Einstellungen → Konto → Mit E-Mail anmelden** (bzw. „Mit vorhandener E-Mail anmelden").
+2. Dieselbe Adresse, Code aus der Mail, **Bestätigen**.
+3. Die App gleicht danach von selbst ab: Ordner, Dokumente und der Gelesen-Status kommen an.
+
+`KOMPENDIUM_OWNER_ID` in `.env.local` bleibt dabei unverändert — das Verknüpfen ändert die Kennung nicht.
 
 ---
 
@@ -130,6 +162,11 @@ Das `-c` leert den Metro-Cache. Ohne das siehst du unter Umständen noch die alt
 | SQL-Fehler bei `storage.…` | Storage-Policies brauchen teils erhöhte Rechte | Rest des Skripts läuft; Bucket notfalls per Hand unter **Storage → New bucket**, Name `documents`, Private, anlegen |
 | App startet, zeigt aber keine Daten | `.env` nicht geladen | `npx expo start -c`, Variablennamen gegen `.env.example` prüfen |
 | Fehler „Anonymous sign-ins are disabled" | Schritt 1.6 fehlt | Provider einschalten und speichern |
+| „E-Mail-Anmeldung ist im Supabase-Projekt nicht aktiviert." | Schritt 1.7 fehlt | Email-Provider einschalten und speichern |
+| Mail kommt an, enthält aber nur einen Link und keinen Code | Vorlage ohne `{{ .Token }}` | Schritt 1.7, Punkt 4 |
+| „Der Code stimmt nicht oder ist abgelaufen." | Codes gelten nur kurz | Neu anfordern; auf dem Zweitgerät dieselbe Adresse wie auf dem Erstgerät |
+| „Diese Adresse wird schon von einem anderen Konto benutzt." | Die Adresse hängt bereits an einer anderen Identität | Auf dem Zweitgerät **anmelden** statt **verknüpfen** |
+| Zweitgerät bleibt leer | Es hängt noch an seiner eigenen anonymen Identität | Unter **Konto** prüfen, ob dort die E-Mail steht; sonst anmelden und erneut synchronisieren |
 | Alles leer, keine Fehlermeldung | RLS aktiv, aber `owner_id` wird beim Schreiben nicht gesetzt | Beim ersten Schreibversuch melden — das ist dann ein Code-Thema, kein Setup-Thema |
 | Nichts geht, App startet trotzdem | So gewollt: ohne `.env` läuft die App im lokalen Modus (expo-sqlite) weiter | Kein Fehler, nur kein Sync |
 
@@ -142,6 +179,8 @@ Das `-c` leert den Metro-Cache. Ohne das siehst du unter Umständen noch die alt
 - [ ] Jede Tabelle hat RLS aktiv und mindestens eine Policy
 - [ ] Bucket `documents` existiert und ist privat
 - [ ] Anonymous sign-ins aktiviert und gespeichert
+- [ ] Email-Provider aktiviert, Vorlagen enthalten `{{ .Token }}`
+- [ ] Erstgerät verknüpft, User-ID unverändert (`is_anonymous = false`)
 - [ ] `.env` liegt in `C:\Projekte\Kompendium` mit URL und Anon Key
 - [ ] `.env` steht in `.gitignore`
 - [ ] `npx expo start -c` läuft ohne Supabase-Fehler in der Konsole

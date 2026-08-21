@@ -25,7 +25,6 @@ import { pushChanges } from '../data/remote/push';
 import { countOutbox } from '../data/db/repository';
 import type { SyncStatus } from '../ui/SyncIndicator';
 import { useNetworkStore } from './network';
-import { reloadStores } from './hydrate';
 
 interface SyncState {
   status: SyncStatus;
@@ -75,7 +74,15 @@ export const useSyncStore = create<SyncState>((set, get) => ({
       // Nur neu einlesen, wenn sich wirklich etwas geaendert hat: ein Abruf
       // ohne Ergebnis soll keine Liste neu aufbauen, durch die der Nutzer
       // gerade scrollt.
-      if (result.changed > 0) await reloadStores();
+      if (result.changed > 0) {
+        // Bewusst erst hier geladen und nicht oben importiert: `hydrate.ts`
+        // braucht `useSyncStore` (Anfangsstatus), und ein statischer Import
+        // zurueck machte daraus einen Modulzyklus. Beim Start waere
+        // `reloadStores` dann kurzzeitig `undefined` — Metro warnt davor.
+        // Zur Aufrufzeit ist `hydrate.ts` laengst fertig ausgewertet.
+        const { reloadStores } = await import('./hydrate');
+        await reloadStores();
+      }
       // Blieb etwas liegen — ein Ordner, den es oben noch nicht gibt —, ist
       // `pending` die richtige Auskunft und nicht `idle`.
       const open = await countOutbox();

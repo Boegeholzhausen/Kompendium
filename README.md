@@ -65,9 +65,15 @@ Bibliothek/Ordner/Einstellungen (siehe "Abweichungen").
    Publishable/Anon Key kopieren, in `.env` eintragen.
 2. `supabase/schema.sql` im SQL-Editor ausführen. Das Skript ist idempotent —
    bei einem bestehenden Projekt einfach erneut laufen lassen, es ergänzt
-   fehlende Spalten (zuletzt `documents.source_path`).
+   fehlende Spalten (zuletzt `folders.keep_offline`, `documents.scroll_offset`
+   und die Tabelle `user_settings`).
 3. Unter *Authentication > Sign In / Providers* **Anonymous sign-ins**
    aktivieren — die App meldet sich ohne Login-Screen an.
+4. Am selben Ort **Email** aktivieren und in den Mail-Vorlagen `{{ .Token }}`
+   ergänzen. Erst damit lässt sich die Geräte-Identität unter
+   *Einstellungen > Konto* mit einer E-Mail verknüpfen — und nur dann sieht ein
+   zweites Gerät denselben Bestand. Schritt für Schritt:
+   [supabase/SETUP.md](supabase/SETUP.md).
 
 Ohne `.env` startet die App trotzdem und läuft rein lokal — dann bleibt der
 Beispiel-Bestand aus `src/data/sampleLibrary.ts` die Bibliothek. **Mit** `.env`
@@ -93,6 +99,9 @@ erkannt würden. Ein zweiter Lauf über denselben Ordner lädt nichts erneut hoc
 **Reihenfolge beim ersten Mal:** erst die App einmal auf dem Handy starten —
 sie meldet sich anonym an und legt damit die Identität an, unter der die
 Dokumente liegen. Ohne sie hat das Skript keine `owner_id` und sagt das auch.
+Die Kennung steht in der App unter *Einstellungen > Konto > Gerätekennung*
+(Antippen kopiert sie). Sie ändert sich beim Verknüpfen mit einer E-Mail
+**nicht** — eine einmal eingetragene `KOMPENDIUM_OWNER_ID` bleibt gültig.
 
 Der Service-Role-Key in `.env.local` umgeht RLS vollständig. Er gehört auf den
 Rechner und niemals in die App — warum das Skript ihn trotzdem braucht, steht
@@ -108,14 +117,12 @@ app/suche.tsx         Suche als Push-Screen, ohne Tab-Bar
 app/papierkorb.tsx    Papierkorb, aus den Einstellungen erreichbar
 app/darstellung.tsx   Darstellung, aus den Einstellungen erreichbar
 app/offline.tsx       "Offline behaltene Dokumente" aus der Gruppe Speicher
-app/abnahme.tsx       Abnahmeblätter als Push-Screen
 src/theme/            Design-Tokens — einzige Stelle mit Hex-Werten
 src/ui/               Basiskomponenten, Kachel und Icon-Register
 src/screens/          Screens; jeder in einem eigenen Ordner
 src/state/            Zustand, der Screens überdauert (zustand)
 src/data/             Typen, Formate, Suchlauf, Import, Dateicache
 src/data/db/          Schema und Repository — die einzige Stelle mit SQL
-src/dev/              Abnahmeblätter (Tokens, Kacheln, Komponenten)
 scripts/lint-tokens   Prüft: keine freihändigen Farb- oder Schriftwerte
 scripts/shots.mjs     Screenshots des Viewer-Kernflows
 scripts/shots6.mjs    Screenshots der Ordner-/Such-/Import-Screens
@@ -177,10 +184,6 @@ sich von außen nichts einspritzen. Im Web-Bild sind deshalb nur Menüeintrag,
 Sheet und die eingeklappte Form aus einem Suchtreffer zu sehen — die Zählung
 steht dort immer auf „Nicht im Dokument gefunden". Ob wirklich gesprungen und
 hervorgehoben wird, ist nur auf dem Gerät zu prüfen.
-
-Die Abnahmeblätter liegen unter `src/dev/` und sind über **Einstellungen >
-Abnahmeblätter** erreichbar: **Tokens** (`1a`), **Kacheln** (`1b`),
-**Komponenten** (`2a`).
 
 Vor jeder Übergabe wird dreifach geprüft — Typcheck, Token-Lint, Build —
 plus eine echte visuelle Kontrolle per Screenshot gegen `Kompendium.dc.html`.
@@ -247,11 +250,14 @@ beim Laden nichts weiß aufblitzt.
 
 ## Abweichungen vom Handoff-Dokument — Projektentscheidungen
 
-- **Speicherbalken:** Blatt `3i` zeigt "1,4 GB belegt / von 3 GB", also 46 %
-  des Balkens. Gerechnet wird stattdessen aus dem Bestand; mit der
-  Erstbefüllung sind das rund 98 MB, der Balken bleibt also fast leer. Jedes
-  Segment über null wird mindestens 2 dp breit gezeichnet, damit es sichtbar
-  bleibt.
+- **Speicherbalken:** Der Balken aus Blatt `3i` samt Kontingent von 3 GB ist
+  entfallen. Das Kontingent war kein Gerätewert und wurde von nichts
+  durchgesetzt — kein Import blockiert, nichts verdrängt; ein Balken, dessen
+  Bezugsgröße folgenlos ist, sagt dem Nutzer etwas Falsches über den freien
+  Platz. Die Gruppe „Speicher" zeigt stattdessen den belegten Platz als Zahl
+  und darunter die Aufteilung in „Offline behalten" und „Cache", weil genau
+  diese Trennung den Unterschied zwischen „Cache leeren" und Datenverlust
+  trägt.
 - **Sync-Zustand beim Start** ist `pending` ("Änderungen offen"), nicht wie in
   Blatt `1c` `syncing`. Seit es die Outbox gibt, ist das keine Annahme mehr,
   sondern eine Auskunft: `hydrateStores()` zählt die offenen Einträge und
@@ -263,13 +269,20 @@ beim Laden nichts weiß aufblitzt.
 - **"Papierkorb leeren"** fragt einmal nach — im Muster des Kontextmenüs
   (Komponente 9), nicht als Dialog. Es ist die einzige Aktion der App, die ein
   Toast mit "Rückgängig" nicht absichern kann.
+- **Gruppen der Einstellungen.** Blatt `3i` stellt Papierkorb, Darstellung und
+  Über ohne Gruppenüberschrift zusammen ("drei Einzelziele brauchen keine drei
+  Überschriften"). Der **Papierkorb** steht jetzt in der Gruppe **Speicher**:
+  er ist belegter Platz und beantwortet neben "Offline behaltene Dokumente"
+  dieselbe Frage. Die verbleibenden zwei Zeilen tragen die Überschrift
+  **"Sonstiges"**, damit keine Gruppe ohne Überschrift zwischen zwei
+  beschrifteten hängt.
+- **Die Fußnote** unter den Gruppen ("Die Bibliothek liegt lokal auf diesem
+  Gerät …") ist entfallen. Seit die Gruppe Synchronisierung Zustand, Zeitpunkt
+  und Gerätekennung zeigt, sagte sie nichts, was darüber nicht schon steht.
 - **Eigene Screens ohne Blatt:** das URL-Eingabe-Sheet (der Prototyp endet bei
   der Auswahlfläche) und "Offline behaltene Dokumente" (das Blatt zeigt nur
   die Zeile mit Chevron). Beide sind ausschließlich aus vorhandenen Teilen
   gebaut.
-- Die Zeile **"Abnahmeblätter"** in den Einstellungen ist ergänzt, damit die
-  Blätter aus `src/dev` erreichbar bleiben. In einer ausgelieferten Fassung
-  fällt sie weg.
 - **Netzzustand** wertet nur `isConnected`, nicht `isInternetReachable`:
   Letzteres kostet einen Testabruf gegen eine fremde Adresse, der aus eigenen
   Gründen scheitern kann — dann stünde "Offline" über einer Bibliothek, die
@@ -401,15 +414,29 @@ beim Laden nichts weiß aufblitzt.
   werden. Das Feld über der Sektionsüberschrift ist wie in der Bibliothek nur
   eine Schaltfläche; es setzt den Ordnerfilter vorab und schiebt die Suche
   auf. Der Chip nennt den Ordnernamen und bleibt mit einem Tipp abwählbar.
+- **Ordner-Detail: schlanker Kopf und Filterleiste statt zwei Aktionen.**
+  Blatt `3b` zeigt unter dem Namen zwei kompakte sekundäre Aktionen („Für
+  offline laden" und „Bearbeiten"). Beide stehen längst im Überlaufmenü
+  („Inhalt offline behalten", „Ordner umbenennen") — zwei Wege zur selben
+  Sache, die oben nur Höhe kosteten. Sie sind ersatzlos entfallen; zusätzlich
+  stehen Ordner-Icon und Name jetzt **nebeneinander** in einer Zeile statt
+  untereinander. An die Stelle der Aktionszeile tritt dieselbe Filterleiste wie
+  in der Bibliothek (Alle · Ungelesen · Favoriten · Archiv), damit der Ordner
+  dieselben Fragen beantworten kann wie sie. Der Filter ist **lokal** und
+  startet immer auf „Alle": `activeFilter` gehört der Bibliothek, sonst stünde
+  sie nach einem Blick ins Ordner-Archiv ebenfalls auf „Archiv", ohne dass
+  jemand sie angefasst hat. Die Metazeile („2 Dokumente · 41 KB") zählt
+  bewusst die **angezeigte** Liste mit, folgt also dem Chip. Weil unter „Archiv"
+  archivierte Dokumente in der Liste stehen, schaltet die Wischgeste nach
+  rechts dort in beide Richtungen („Archiv" / „Zurück").
 
 - **"Alle Dokumente" ist als eigene Zeile aus der Ordner-Übersicht entfernt.**
   Blatt `3a` zeigt sie als volle Zeile über dem Kachel-Raster mit eigener
   Route (`app/alle-dokumente`). Die Bibliothek zeigt aber ohnehin schon alle
   Dokumente ungefiltert — die Zeile duplizierte damit nur den Bibliothek-Tab
-  und ist samt Route ersatzlos gestrichen. `FolderDetailScreen` beherrscht
-  `folderName === null` ("alle Dokumente" ohne Filter) weiterhin, weil
-  Ordner-Detail und diese Ansicht sich den Screen teilen; erreichbar ist der
-  Pfad aktuell aber nirgends mehr in der Navigation.
+  und ist samt Route ersatzlos gestrichen. `FolderDetailScreen` kannte
+  daraufhin noch einen unerreichbaren Zweig für `folderName === null`; er ist
+  mit dem Umbau des Ordner-Kopfs entfallen, `folderName` ist jetzt `string`.
 - **Tags sind ersatzlos entfallen; an ihre Stelle tritt der Workflow-Status.**
   Tags sind eine mehrwertige Klassifikation, "gelesen/ungelesen/archiviert" ein
   einwertiger Lebenszyklus — über eine Zuordnungstabelle abgebildet erlaubte
@@ -431,11 +458,54 @@ beim Laden nichts weiß aufblitzt.
   Info-Sheet. Wischen ist dabei immer nur eine Abkürzung, nie der einzige Weg.
 - **Es gibt jetzt eine Richtung nach oben (Outbox).** `updateDocuments` merkt
   im Repository vor, welche Felder sich geändert haben; `pushChanges()` schickt
-  sie vor jedem Abruf hoch. Bekannte Grenzen: Dokumente ohne `storage_path`
-  werden nicht eingereiht (die Zeile war nie oben, ein `update` träfe nichts),
-  ein lokal angelegter Ordner wird ohne `remote_id` ausgelassen statt als
-  "kein Ordner" geschickt, und `updated_at` setzt der Server — eine Gerätezeit
-  im Wasserzeichen könnte die Reihenfolge dauerhaft verderben.
+  sie vor jedem Abruf hoch. `updated_at` setzt dabei immer der Server — eine
+  Gerätezeit im Wasserzeichen könnte die Reihenfolge dauerhaft verderben.
+- **Der Push läuft in vier Schritten, und die Reihenfolge hängt fest:** Ordner
+  → neue Dokumente → geänderte Felder → Voreinstellungen. Ein Dokument in einem
+  Ordner kann nur hochgehen, wenn der Ordner oben eine Zeile hat, und ein
+  `update` auf eine Zeile, die es oben nicht gibt, trifft nichts und meldet
+  trotzdem Erfolg. Vorher blieb genau deshalb jeder Outbox-Eintrag liegen,
+  dessen einziges Feld `folderName` war — der Sync-Status stand dauerhaft auf
+  „Änderungen offen".
+- **Ordner gehen ohne eigene Outbox nach oben.** Bei einer Handvoll Ordner ist
+  der direkte Vergleich des ganzen Bestands der einfachere richtige Weg
+  (`readFoldersForPush`). Zwei Folgen: *gleicher Name = derselbe Ordner* — ein
+  lokaler Ordner ohne `remote_id` übernimmt eine vorhandene Zeile gleichen
+  Namens, statt eine zweite anzulegen. Und Löschen braucht einen Grabstein
+  (`folder_deletions`), weil eine gelöschte Zeile lokal nichts hinterlässt, was
+  der Vergleich noch finden könnte.
+- **Am Handy importierte Dokumente bekommen eine UUID.** `public.documents.id`
+  ist oben eine `uuid`; die früheren `doc-import-…`-Kennungen konnten deshalb
+  prinzipiell nie hochgehen. Die Umstellung ist eine einmalige Datenwanderung
+  (`migrateLocalIdsToUuid`), abgesichert über `sync_state`, nicht über
+  `user_version` — in `migrations` steht ausschließlich SQL. `cache_key` bleibt
+  dabei unverändert: die Datei im Cache wird nicht umbenannt.
+- **Der Beispiel-Bestand wird nie hochgeladen.** Die CHECK-Bedingung oben kennt
+  `source = 'sample'` nicht, und er ist Erstbefüllung und kein Bestand.
+- **Die Identität lässt sich mit einer E-Mail verknüpfen, wird dabei aber nie
+  ersetzt** (`updateUser`, nicht `signInWithOtp`). Ein Neuanmelden auf dem
+  Erstgerät ließe alle vorhandenen Zeilen verwaist zurück — `owner_id` zeigte
+  auf eine Identität, an die niemand mehr herankommt. Bestätigt wird über einen
+  sechsstelligen Code aus der Mail und nicht über einen Magic Link: der
+  bräuchte einen Deep-Link-Rückweg, den Expo Go nicht verlässlich bedient.
+- **Wechselt die Identität, verliert der Abgleich seine Merkposten**
+  (`noteOwner`): Wasserzeichen, Ordner-Ausweise und der Stand der
+  Voreinstellungen zeigen dann auf ein fremdes Konto. Unter RLS scheitert ein
+  `update` darauf nicht — es trifft schlicht keine Zeile und meldet Erfolg.
+  Der lokale Bestand bleibt unangetastet; was früher unter dem alten Konto
+  hochgeladen wurde, bleibt allerdings dort liegen.
+- **Die Leseposition steht in der Dokumentzeile** (`documents.scroll_offset`)
+  und nicht mehr als JSON-Objekt in `settings`: sie gehört zum Dokument und
+  geht so über die vorhandene Outbox mit. Geschrieben wird nur beim Verlassen
+  des Viewers und beim Wechsel in den Hintergrund — die frühere
+  Zwei-Sekunden-Drossel ist entfallen, weil jede Schreibung das Dokument in die
+  Outbox einreiht und der Sync-Status sonst beim Lesen dauernd springen würde.
+  Im `StoredDocument` taucht sie bewusst nicht auf: kein Screen zeigt sie.
+- **Darstellung und Sortierung gehen als `user_settings` mit, der Suchverlauf
+  nicht.** Textgröße, Abdunkeln, Bildschirm anlassen, Ansicht und Sortierung
+  beschreiben den Nutzer; zuletzt gesuchte Begriffe beschreiben dieses Gerät.
+  Konflikt: der jüngere `updated_at`-Wert gewinnt — bei einer Voreinstellung
+  gibt es nichts zu vereinigen, nur zu wählen.
 - **Der Abruf überschreibt Nutzerfelder nicht, solange ein Outbox-Eintrag
   offen ist.** Sonst nähme er zurück, was gerade offline gewischt wurde.
   Technische Felder (`doc_type`, `size_bytes`, `updated_at`, `source`,
@@ -449,10 +519,6 @@ Beschriftungen im Aktionsbalken, ergänztes "Dokumente abdunkeln", ergänztes
 
 ## Noch offen
 
-- Dateien gehen noch nicht nach oben: die Outbox schickt Metadaten, aber ein
-  am Handy importiertes Dokument bleibt lokal, weil es keinen `storage_path`
-  hat. Dasselbe gilt für Ordner, die am Handy entstanden sind — ohne
-  `remote_id` lässt der Push das Feld aus.
 - Abgleich beim Wechsel in den Vordergrund und Pull-to-Refresh. Zurzeit
   läuft der Abruf beim App-Start und über „Jetzt synchronisieren".
 - Der Volltext eines abgeglichenen Dokuments steht erst zur Verfügung, wenn
