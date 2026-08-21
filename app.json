@@ -31,6 +31,13 @@
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "cfa24936-9f38-4dc5-8076-0e106a7254f6"
+      }
+    },
+    "owner": "boegedev"
   }
 }

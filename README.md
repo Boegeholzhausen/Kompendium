@@ -639,6 +639,119 @@ zeigt: `windowSoftInputMode="adjustResize"` und
 nicht eingeführt; das Manifest trägt `expo.modules.updates.ENABLED=false`.
 Jede Änderung geht damit über einen neuen Build.
 
+### EAS-Profile
+
+Der Build läuft in der Cloud über [EAS Build](eas.json); ein lokales Android
+SDK ist nicht nötig. In `eas.json` steht `cli.appVersionSource: "remote"` —
+die Versionszählung führt EAS auf dem Server, nicht diese Datei. Der
+`versionCode` in app.json ist damit nur noch der Startwert; maßgeblich ist,
+was EAS hochzählt. Das verhindert den häufigsten Ablehnungsgrund beim
+Hochladen: zwei Builds mit derselben Nummer.
+
+Zwei Profile:
+
+- **`preview`** — Android, `buildType: "apk"`, `distribution: "internal"`.
+  Ergibt eine APK, die sich direkt auf dem Gerät installieren lässt (EAS gibt
+  dafür einen Link mit QR-Code aus). Das ist der Weg zum Testen **ohne** Play
+  Console. Kein `autoIncrement`: eine Testinstallation muss keine Nummer
+  verbrauchen.
+- **`production`** — Android, `buildType: "app-bundle"`, `autoIncrement: true`.
+  Ergibt das AAB für die Play Console. AAB statt APK, weil Google für neue
+  Uploads nichts anderes annimmt. `autoIncrement` zählt den `versionCode` vor
+  jedem Build um eins hoch.
+
+Kein `channel` in den Profilen: das Feld wirkt nur mit `expo-updates`, und das
+ist hier bewusst nicht installiert (siehe oben). Ein gesetzter Wert würde
+lediglich vortäuschen, es gäbe OTA-Updates.
+
+### Zugangsdaten im Cloud-Build
+
+`.env` ist gitignored und liegt nur auf diesem Rechner — der Cloud-Build sieht
+sie **nicht**. Fehlen die beiden Werte, startet die App trotzdem, aber
+`isSupabaseConfigured` ist `false` (siehe [src/data/supabase.ts](src/data/supabase.ts))
+und sie läuft rein lokal: kein Abgleich, keine Anmeldung. Deshalb liegen die
+zwei Werte als EAS Environment Variables für beide Profile:
+
+```bash
+eas env:create --name EXPO_PUBLIC_SUPABASE_URL --scope project --environment preview --environment production --visibility plaintext
+eas env:create --name EXPO_PUBLIC_SUPABASE_ANON_KEY --scope project --environment preview --environment production --visibility plaintext
+```
+
+Beide Befehle fragen den Wert interaktiv ab. `plaintext` ist richtig und kein
+Versehen: `EXPO_PUBLIC_*` landet ohnehin im JavaScript-Bündel und ist damit aus
+jeder installierten App auslesbar — der Anon Key ist dafür gedacht, geschützt
+wird die Datenbank durch RLS, nicht durch Geheimhaltung dieses Werts.
+
+**`SUPABASE_SERVICE_ROLE_KEY` aus `.env.local` darf niemals nach EAS.** Er
+umgeht RLS vollständig und wird nur vom Upload-Skript auf diesem PC gebraucht;
+in einem Build wäre er aus der App auslesbar und gäbe jedem Vollzugriff auf
+alle Daten.
+
+Kontrolle: `eas env:list --environment production`.
+
+### Signierung
+
+Den Keystore erzeugt EAS beim ersten `production`-Build selbst (oder vorab per
+`eas credentials`); er liegt danach auf dem EAS-Server und wird bei jedem Build
+verwendet.
+
+Drei Sätze dazu: Der **Upload-Key** ist der Schlüssel, mit dem *dieses* Projekt
+das AAB signiert, bevor es hochgeladen wird — daran erkennt die Play Console,
+dass ein Upload wirklich von diesem Projekt stammt. Bei **Play App Signing**
+signiert Google die App danach noch einmal mit einem eigenen App-Signing-Key,
+den Google verwahrt und der niemals dieses Haus verlässt; das ist die Signatur,
+die am Ende auf dem Gerät ankommt. Den Upload-Key darf man trotzdem nie
+verlieren: ohne ihn nimmt die Console keinen weiteren Upload für diese App
+mehr an, und ein Ersatz muss bei Google beantragt werden — deshalb einmal
+`eas credentials` ausführen und das Backup herunterladen, statt sich allein
+darauf zu verlassen, dass der Schlüssel bei EAS liegt.
+
+### Was der Release-Build anders macht
+
+Minify/ProGuard bleibt **aus** — `android.enableMinifyInReleaseBuilds` ist
+nicht gesetzt und der Standard ist `false`. Das ist hier die sichere Wahl: der
+JavaScript-Teil wird von Hermes ohnehin schon zu Bytecode übersetzt, ProGuard
+greift also nur die Java-/Kotlin-Seite an — und genau dort arbeiten React
+Native und die Expo-Module mit Reflexion über Klassen- und Methodennamen, die
+ein Minifier ohne passende `-keep`-Regeln umbenennt. Der Fehler zeigt sich dann
+nicht beim Bauen, sondern erst zur Laufzeit im Release, mit einem Stacktrace
+aus umbenannten Namen. Zu gewinnen wären ein paar Megabyte APK-Größe; das lohnt
+sich erst, wenn die App im Store steht und stabil läuft — dann gezielt
+einschalten und die Liste unten noch einmal durchgehen.
+
+Außerdem läuft der Build auf der **New Architecture** (`newArchEnabled=true`).
+
+Was im Release-Build anders ist als in Expo Go — Expo Go bringt seine eigenen
+Module, seinen eigenen JS-Server und ein anderes Signaturumfeld mit. Diese
+Stellen deshalb am Gerät gezielt prüfen:
+
+1. **Schriften.** `@expo-google-fonts/inter` wird über Unterpfade importiert;
+   in Expo Go liegen die Dateien anders als im eigenständigen Build. Prüfen,
+   ob wirklich Inter zu sehen ist und nicht die System-Schrift.
+2. **Viewer/WebView inkl. `textZoom`.** Die WebView kommt im Release aus dem
+   Build selbst. Dokument öffnen, Textgröße im Regler ändern, prüfen, ob die
+   Schrift im Dokument mitgeht.
+3. **Erstinstallation der Datenbank.** Frisch installierte App = leere
+   SQLite-Datei; die Migrationen aus `src/data/db/schema.ts` laufen zum ersten
+   Mal am Stück durch. **Achtung:** Mit hinterlegten EAS-Zugangsdaten ist
+   `isSupabaseConfigured` `true`, und `seedIfEmpty` steigt dann sofort aus —
+   die Bibliothek ist beim ersten Start **leer**, bis der erste Abgleich
+   gelaufen ist. Der Beispiel-Bestand aus `sampleLibrary.ts` erscheint nur
+   ohne Zugangsdaten. Beides ist richtig so, sieht aber leicht wie ein Fehler
+   aus.
+4. **Anmeldung** im Einstellungen-Sheet: einloggen, App schließen, neu öffnen —
+   bleibt die Sitzung stehen (AsyncStorage)?
+5. **Abgleich in beide Richtungen:** Pull (Dokumente kommen an) und Push
+   (Änderung am Handy, Outbox leert sich, Sync-Zustand geht auf `idle`).
+6. **Import auf allen drei Wegen:** Datei-Picker, Zwischenablage, URL. Der
+   Datei-Picker ist der wichtigste Punkt, weil hier die geblockten
+   Speicher-Berechtigungen wirken — er muss trotzdem funktionieren.
+7. **Teilen und Drucken** aus dem Viewer: beide reichen eine Datei an eine
+   fremde App weiter und gehen über den FileProvider, der nur im eigenen Build
+   auf `de.boege.kompendium` lautet.
+8. **Icon und Name** im Launcher: adaptives Icon, das sich beim Wackeln
+   bewegt, Beschriftung "Kompendium".
+
 ### App-Icon
 
 Eigener Entwurf (Variante 02, "Aufgeschlagenes Blatt mit Lesezeichen"),

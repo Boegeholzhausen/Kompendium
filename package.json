@@ -50,6 +50,7 @@
   "devDependencies": {
     "@types/react": "~19.2.0",
     "babel-preset-expo": "~57.0.6",
+    "eas-cli": "^22.2.0",
     "react-native-web": "^0.21.2",
     "typescript": "~6.0.3"
   }
