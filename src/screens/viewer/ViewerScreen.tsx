@@ -3,9 +3,23 @@
  *
  * Zweck: lesen. Die App muss verschwinden. Deshalb fuellt das Dokument den
  * Bildschirm randlos, und die Bedienung schwebt darueber statt im Layout zu
- * stehen. Beim Runterscrollen verschwindet sie vollstaendig, bei der ersten
- * Aufwaertsbewegung kommt sie zurueck — Schwelle 8 px, damit Mikrobewegungen
- * nichts ausloesen.
+ * stehen.
+ *
+ * Sie geht auf zwei Wegen weg, und die haben verschiedene Bedeutungen:
+ *
+ *   Automatik   Beim Runterscrollen verschwindet sie vollstaendig, bei der
+ *               ersten Aufwaertsbewegung kommt sie zurueck — Schwelle 8 px,
+ *               damit Mikrobewegungen nichts ausloesen (`autoVisible`).
+ *   Tippen      Ein kurzer Tipp mit ZWEI Fingern auf das Dokument versteckt
+ *               sie bewusst; Scrollen holt sie dann nicht zurueck, auch nicht
+ *               ganz oben — erst der naechste Zwei-Finger-Tipp
+ *               (`pinnedHidden`).
+ *
+ * Tippen gewinnt gegen die Automatik. Der Grund steht in README.md unter
+ * "Abweichungen": beim Lesen scrollt man staendig ein Stueck zurueck, wodurch
+ * die Leiste immer wieder ins Bild kam. Dass es zwei Finger sein muessen, hat
+ * einen eigenen Grund — ein Einzeltipp gehoert immer dem Dokument, das ja
+ * selbst bedienbar ist (Kopf von `DocumentView`).
  *
  * Aufbau der Ebenen, von unten nach oben:
  *   Buehne `bg/base`  verhindert weisses Aufblitzen beim Laden
@@ -143,7 +157,14 @@ export function ViewerScreen({ documentId, searchTerm, onBack }: ViewerScreenPro
   const rememberScroll = useViewerStore((state) => state.rememberScroll);
   const initialOffset = useViewerStore((state) => state.scrollPositions[documentId] ?? 0);
 
-  const [chromeVisible, setChromeVisible] = useState(true);
+  /**
+   * Zwei Zustaende, aus denen sich `chromeVisible` ergibt: die Scroll-Automatik
+   * und das bewusste Verstecken per Tipp. Tippen gewinnt — wer die Bedienung
+   * weggetippt hat, bekommt sie beim Zurueckscrollen nicht wieder ins Bild.
+   */
+  const [autoVisible, setAutoVisible] = useState(true);
+  const [pinnedHidden, setPinnedHidden] = useState(false);
+  const chromeVisible = !pinnedHidden && autoVisible;
   const [activeSheet, setActiveSheet] = useState<null | 'info' | 'move' | 'find'>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [undoable, setUndoable] = useState<UndoableAction | null>(null);
@@ -245,10 +266,24 @@ export function ViewerScreen({ documentId, searchTerm, onBack }: ViewerScreenPro
 
       lastOffset.current = offset;
       rememberScroll(documentId, offset);
-      setChromeVisible(offset <= 0 || delta < 0);
+      setAutoVisible(offset <= 0 || delta < 0);
     },
     [documentId, rememberScroll]
   );
+
+  /**
+   * Ein kurzer Tipp mit zwei Fingern auf die Dokumentflaeche schaltet das
+   * bewusste Verstecken um — warum zwei und nicht einer, steht im Kopf von
+   * `DocumentView`. Steht ein Sheet oder das Menue offen, gehoert die Geste
+   * dorthin: der Viewer dahinter reagiert nicht. Beim Zurueckholen faengt die
+   * Automatik wieder bei "sichtbar" an, sonst haenge die Bedienung am letzten
+   * Scrollschritt.
+   */
+  const handleTwoFingerTap = useCallback(() => {
+    if (activeSheet !== null || menuOpen) return;
+    setPinnedHidden((hidden) => !hidden);
+    setAutoVisible(true);
+  }, [activeSheet, menuOpen]);
 
   /**
    * Geteilt wird die Datei, nicht der Titel: ein Dokument weiterzugeben heisst,
@@ -447,6 +482,7 @@ export function ViewerScreen({ documentId, searchTerm, onBack }: ViewerScreenPro
           onLoaded={handleLoaded}
           onExternalLinkFailed={handleExternalLinkFailed}
           onExternalLinkBlocked={handleExternalLinkBlocked}
+          onTwoFingerTap={handleTwoFingerTap}
           find={find.command}
           onFindResult={find.setResult}
         />

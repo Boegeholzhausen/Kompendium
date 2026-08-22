@@ -49,6 +49,16 @@ export const size = {
   /** Mindestabstand zwischen zwei Beruehrungsflaechen */
   touchGap: 8,
 
+  /** Sichtbares Feld der App-Marke im Kopf. Kleiner als touchTarget,
+   *  damit keine Kopfzeile hoeher wird — die 48er Schaltflaeche rechts gibt
+   *  die Zeilenhoehe weiter allein vor. */
+  appMark: 40,
+  /** Abstand zwischen Marke und Titel. */
+  appMarkGap: 8,
+  /** Kante des gerenderten Bildes: 40 / 0,66, weil der adaptive
+   *  Vordergrund sein Motiv nur im inneren Kreis traegt. */
+  appMarkImage: 61,
+
   /** Dokumentzeile */
   rowHeight: 64,
   /** Kachel in der Zeile */

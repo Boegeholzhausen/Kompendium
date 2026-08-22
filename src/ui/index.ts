@@ -47,6 +47,7 @@
  *   Slider           Regler "Textgroesse im Viewer" (`6b`)
  */
 export * from './Text';
+export * from './AppMark';
 export * from './press';
 export * from './DocTile';
 export * from './DocRow';

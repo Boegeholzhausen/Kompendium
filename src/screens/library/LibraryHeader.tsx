@@ -37,6 +37,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { bg, border, radius, size, space } from '../../theme';
+import { AppMark } from '../../ui/AppMark';
 import { FilterChipRow } from '../../ui/FilterChipRow';
 import { ArrowsDownUp, Rows, SquaresFour } from '../../ui/icons';
 import { IconButton } from '../../ui/IconButton';
@@ -127,7 +128,24 @@ export function LibraryHeader({
     opacity: interpolate(progress(scrollY.value), [0.45, 0.55], [0, 1], Extrapolation.CLAMP),
   }));
 
-  const actionsStyle = useAnimatedStyle(() => {
+  /**
+   * Die App-Marke links vom Titel. Sie wandert senkrecht wie die
+   * Schaltflaechen rechts, nur mit ihrer eigenen Hoehe gerechnet.
+   *
+   * Ausgeklappt richtet sie sich NICHT nach der Mitte des 68er Balkens,
+   * sondern nach demselben Inhaltsfeld wie `TitleHeader` auf Ordner und
+   * Einstellungen: dort beginnt es beim oberen Innenabstand 8 und endet bei
+   * 56, die 48er Schaltflaeche sitzt also oben auf 8 und die Marke mittig zu
+   * ihr. Nach der Balkenmitte gerechnet saesse sie 2 tiefer, und beim
+   * Tabwechsel spraenge sie sichtbar. Kollabiert gibt es keinen Innenabstand
+   * mehr, dort zentriert sie im 56er Balken.
+   *
+   * Sie macht den Kopf nicht hoeher: sie liegt absolut in der Zeile, und mit
+   * `appMark` (40) bleibt sie auch unter `TITLE_BAR_COLLAPSED` (56). Anders
+   * als `actions` steht sie immer — auch bei `chips === 'none'`, der leeren
+   * Bibliothek.
+   */
+  const markStyle = useAnimatedStyle(() => {
     const t = progress(scrollY.value);
     return {
       transform: [
@@ -136,9 +154,29 @@ export function LibraryHeader({
             t,
             [0, 1],
             [
-              (TITLE_BAR_EXPANDED - size.touchTarget) / 2,
-              (TITLE_BAR_COLLAPSED - size.touchTarget) / 2,
+              space['8'] + (size.touchTarget - size.appMark) / 2,
+              (TITLE_BAR_COLLAPSED - size.appMark) / 2,
             ]
+          ),
+        },
+      ],
+    };
+  });
+
+  /**
+   * Dieselbe Bezugsgroesse wie die Marke: ausgeklappt der obere Innenabstand
+   * 8 (die Schaltflaeche fuellt das Inhaltsfeld 8..56 genau aus), kollabiert
+   * die Mitte des 56er Balkens.
+   */
+  const actionsStyle = useAnimatedStyle(() => {
+    const t = progress(scrollY.value);
+    return {
+      transform: [
+        {
+          translateY: interpolate(
+            t,
+            [0, 1],
+            [space['8'], (TITLE_BAR_COLLAPSED - size.touchTarget) / 2]
           ),
         },
       ],
@@ -174,6 +212,9 @@ export function LibraryHeader({
     <View style={styles.overlay} pointerEvents="box-none">
       <Animated.View style={[{ height: top }, statusStyle]} />
       <Animated.View style={[styles.bar, barStyle]}>
+        <Animated.View style={[styles.mark, markStyle]}>
+          <AppMark />
+        </Animated.View>
         <Animated.View style={[styles.titleLayer, styles.titleDisplay, displayTitleStyle]}>
           <Text variant="display">Bibliothek</Text>
         </Animated.View>
@@ -260,9 +301,17 @@ const styles = StyleSheet.create({
     // ihrem Platz, waehrend die Zeile selbst schrumpft.
     justifyContent: 'flex-start',
   },
-  titleLayer: {
+  mark: {
     position: 'absolute',
     left: size.screenPadding,
+    top: 0,
+  },
+  titleLayer: {
+    // Beide Titel-Ebenen ruecken gemeinsam um die Marke nach rechts. Dieselben
+    // 64 wie in `TitleHeader`, wo screenPadding, das appMark-Feld und der
+    // appMarkGap den Titelanfang aus der Flex-Zeile heraus ergeben.
+    position: 'absolute',
+    left: size.screenPadding + size.appMark + size.appMarkGap,
   },
   titleDisplay: {
     // 8 Innenabstand oben plus 6, damit die Versalhoehe auf der Schaltflaeche steht.

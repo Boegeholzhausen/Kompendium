@@ -339,6 +339,28 @@ beim Laden nichts weiß aufblitzt.
   Parameter tragen kann. Als Tipp zählt eine Berührung in den zwei Sekunden
   davor — genauer geht es nicht, `react-native-webview` reicht unter Android
   kein `isUserGesture` durch. Was geblockt wird, sagt ein Toast.
+- **Ein Tipp mit zwei Fingern blendet die Bedienung aus.** Das
+  Handoff-Dokument kennt für Kopfzeile und Aktionsbalken nur das Aus- und
+  Einblenden beim Scrollen. Zusätzlich versteckt ein kurzer Tipp mit **zwei**
+  Fingern auf die Dokumentfläche beides bewusst; Scrollen holt es dann nicht
+  zurück, auch nicht am Dokumentanfang — erst der nächste Zwei-Finger-Tipp.
+  Grund für die Geste selbst: beim Lesen scrollt man ständig ein Stück zurück,
+  wodurch die Leiste immer wieder ins Bild kam.
+  **Warum zwei Finger und nicht einer** — das ist der eigentliche Punkt:
+  Dokumente in dieser App sind selbst bedienbar (Rechner, Klapplisten,
+  Diagramme), ein Einzeltipp gehört deshalb immer dem Dokument. Ein Filter auf
+  Bedienelemente hilft nicht, denn ein Dokument darf seine Klicks per
+  `addEventListener` an ein gewöhnliches `div` hängen — davon steht nichts im
+  Markup, und jeder Bedientipp schaltete zusätzlich die Viewer-Bedienung um.
+  Chromium erzeugt bei Mehrfinger-Berührungen kein `click`; das Dokument sieht
+  die Geste also gar nicht. Erkannt wird sie im Dokument selbst (Listener im
+  eingespritzten Skript), weil `onStartShouldSetResponderCapture` die Ebene
+  bewusst nicht zum Responder macht und deshalb kein `touchend` sieht. Nicht
+  gezählt werden ein oder mehr als zwei Finger, jede Bewegung über 10 px (damit
+  fällt auch das Auf- und Zuziehen heraus) und alles, was ab dem ersten Finger
+  länger als 400 ms dauert. Kein sichtbarer Knopf und kein Menüeintrag dafür,
+  kein Vollbildmodus — die Android-Statusleiste bleibt sichtbar —, und der
+  Viewer startet weiter mit sichtbarer Bedienung.
 - **Das Dokument bekommt eine Inhaltsrichtlinie** (`Content-Security-Policy`
   als `<meta>` im Kopf). Sein eigenes JavaScript läuft weiter — Rechner,
   Diagramme und Klapplisten sind der Sinn der App —, aber `fetch`,

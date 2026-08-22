@@ -71,11 +71,40 @@
  * unterscheiden — dafuer kostet die Zaehlung keinen zweiten Durchlauf durch
  * das DOM.
  *
+ * ## Zwei-Finger-Tipp auf die Dokumentflaeche
+ *
+ * Ein kurzer Tipp mit **zwei** Fingern blendet die Bedienung aus und wieder
+ * ein (siehe `ViewerScreen`).
+ *
+ * Warum zwei Finger und nicht einer: Dokumente in dieser App sind selbst
+ * bedienbar — Rechner, Klapplisten, Diagramme. Ein Einzeltipp ist dort nicht
+ * von einem Bedientipp zu unterscheiden. Ein Filter auf Bedienelemente
+ * (`a`, `button`, `[onclick]` …) hilft nicht: haengt ein Dokument seine Klicks
+ * per `addEventListener` an ein gewoehnliches `div`, steht davon nichts im
+ * Markup, und jeder Bedientipp schaltete zusaetzlich die Viewer-Bedienung um.
+ * Chromium erzeugt bei Mehrfinger-Beruehrungen kein `click`; das Dokument
+ * sieht die Geste also gar nicht, und die App kommt ihm nicht in die Quere —
+ * unabhaengig davon, wie es gebaut ist.
+ *
+ * Erkannt wird sie **im Dokument**, ueber Listener im eingespritzten Skript,
+ * und nicht in React Native: `onStartShouldSetResponderCapture` gibt hier
+ * `false` zurueck, die Ebene wird deshalb nie Responder und sieht kein
+ * `touchend` — von aussen sind Tipp und Wisch damit nicht zu trennen. Im
+ * Dokument gibt es beides: `touchstart`, `touchmove` und `touchend` in
+ * derselben Folge.
+ *
+ * Die Listener haengen in der **Capture-Phase** am `window`, sonst schnitte
+ * ein Dokument mit eigenem `stopPropagation` die Erkennung ab. Was nicht
+ * zaehlt: eine Geste mit einem oder mehr als zwei Fingern, mehr als
+ * `TAP_SLOP_PX` Weg (ein Wisch, und damit auch jedes Auf- und Zuziehen) und
+ * laenger als `TAP_MAX_MS` ab dem ersten Finger.
+ *
  * Fuer den Web-Export gibt es `DocumentView.web.tsx`: `react-native-webview`
  * hat auf Web keine Umsetzung und zeichnet dort nur einen Hinweis. Da der
  * Web-Build allein der Bildkontrolle gegen den Prototyp dient, uebernimmt
  * dort ein `iframe` dieselbe Aufgabe. Die Suche im Dokument gibt es dort
- * nicht: ein fremdes `iframe` laesst sich von aussen nicht durchsuchen.
+ * nicht: ein fremdes `iframe` laesst sich von aussen nicht durchsuchen — und
+ * `onTwoFingerTap` bleibt dort aus demselben Grund ungenutzt.
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, StyleSheet, View } from 'react-native';
@@ -180,6 +209,8 @@ export interface DocumentViewProps {
    * das versucht, sollte man kennen.
    */
   onExternalLinkBlocked?: (url: string) => void;
+  /** Kurzer Tipp mit zwei Fingern auf das Dokument — schaltet die Bedienung um. */
+  onTwoFingerTap?: () => void;
   /** Suchen im Dokument (D2); jede neue `id` fuehrt den Auftrag aus. */
   find?: FindCommand | null;
   onFindResult?: (state: FindState) => void;
@@ -192,6 +223,17 @@ export interface DocumentViewProps {
  * kein `isUserGesture` durch, deshalb dieser Fensterwert.
  */
 const USER_GESTURE_MS = 2000;
+
+/** Wieviel der Finger wandern darf, bevor aus dem Tipp ein Wisch wird. */
+const TAP_SLOP_PX = 10;
+
+/**
+ * Wie lange die Geste dauern darf, bevor sie kein kurzer Tipp mehr ist.
+ *
+ * Die Uhr laeuft ab dem ERSTEN Finger, und zwei Finger landen selten
+ * gleichzeitig — mit 300 ms fiele eine ganz normale Geste durch.
+ */
+const TAP_MAX_MS = 400;
 
 /**
  * Die Inhaltsrichtlinie, die jedem Dokument vorangestellt wird.
@@ -210,12 +252,26 @@ const USER_GESTURE_MS = 2000;
  *   style-src   'unsafe-inline'  eigene Gestaltung im Dokument
  *   img-src     data:            eingebettete Bilder und Diagramme
  *   font-src    data:            eingebettete Schriften
+ *   blob: data:                  selbstentpackende Buendel (siehe unten)
  *
- * Was faellt, ist ausschliesslich der Weg nach draussen (`default-src 'none'`
- * deckt `connect-src`, `frame-src` und `object-src` mit ab). Ein Dokument, das
- * seine Bibliothek per `<script src="https://…">` nachlaedt, funktioniert
- * danach nicht mehr — es haette ohne Netz aber ohnehin nie funktioniert, und
- * eine Bibliothek, die offline liegt, ist der Sinn dieser App.
+ * Manche Dokumente sind selbstentpackend: ein Ladeskript im Kopf erzeugt aus
+ * eingebetteten Daten `blob:`-URLs und haengt sie als `<script src="blob:…">`,
+ * `<link href="blob:…">` oder `<iframe src="blob:…">` wieder ins Dokument.
+ * Ohne `blob:`/`data:` in den betroffenen Direktiven erscheint das Markup, die
+ * Laufzeit dahinter nie — Platzhalter bleiben als Text stehen, Bedienelemente
+ * reagieren nicht.
+ *
+ * `blob:` und `data:` sind Adressen auf Daten im Dokument selbst und haben
+ * keinen Weg ins Netz. Sie aendern deshalb nichts am Sinn der Richtlinie: was
+ * hier laeuft, hat das Dokument selbst mitgebracht.
+ *
+ * Was faellt, ist weiterhin ausschliesslich der Weg nach draussen —
+ * `<script src="https://…">`, fremde Bilder, `fetch` an fremde Server.
+ * `default-src 'none'` bleibt als Grundlage stehen; keine Direktive nennt
+ * `http:` oder `https:`. Ein Dokument, das seine Bibliothek per
+ * `<script src="https://…">` nachlaedt, funktioniert danach nicht mehr — es
+ * haette ohne Netz aber ohnehin nie funktioniert, und eine Bibliothek, die
+ * offline liegt, ist der Sinn dieser App.
  *
  * Ein `<meta>` dieser Art gilt erst ab der Stelle, an der es steht, und muss
  * deshalb so frueh wie moeglich in den Kopf. VOR den Doctype darf es dabei
@@ -226,11 +282,15 @@ const USER_GESTURE_MS = 2000;
 const CONTENT_POLICY =
   `<meta http-equiv="Content-Security-Policy" content="` +
   `default-src 'none'; ` +
-  `script-src 'unsafe-inline' 'unsafe-eval'; ` +
-  `style-src 'unsafe-inline'; ` +
+  `script-src 'unsafe-inline' 'unsafe-eval' blob: data:; ` +
+  `style-src 'unsafe-inline' blob: data:; ` +
   `img-src data: blob:; ` +
-  `font-src data:; ` +
-  `media-src data: blob:` +
+  `font-src data: blob:; ` +
+  `media-src data: blob:; ` +
+  `connect-src blob: data:; ` +
+  `worker-src blob:; ` +
+  `frame-src blob: data:; ` +
+  `child-src blob: data:` +
   `">`;
 
 /**
@@ -270,6 +330,7 @@ export function DocumentView({
   onLoaded,
   onExternalLinkFailed,
   onExternalLinkBlocked,
+  onTwoFingerTap,
   find = null,
   onFindResult,
 }: DocumentViewProps) {
@@ -290,6 +351,68 @@ export function DocumentView({
   // jeder Renderdurchlauf sonst eine neue Zeichenkette dieser Groesse baute —
   // und die WebView sie als neue Quelle ansaehe und das Dokument neu laedt.
   const guardedHtml = useMemo(() => (html === '' ? '' : withContentPolicy(html)), [html]);
+
+  /**
+   * Was beim Laden im Dokument laeuft: die Leseposition wiederherstellen und
+   * danach auf Fingertipps horchen.
+   *
+   * Gemerkt ueber `useMemo`, damit die WebView nicht bei jedem Renderdurchlauf
+   * eine neue Quelle fuer `injectedJavaScript` sieht.
+   */
+  const startupScript = useMemo(
+    () => `window.scrollTo(0, ${Math.round(initialOffset)});
+(function () {
+  var startX = 0;
+  var startY = 0;
+  var startedAt = 0;
+  var moved = true;
+  var maxTouches = 0;
+  var options = { capture: true, passive: true };
+
+  window.addEventListener('touchstart', function (e) {
+    if (!e.touches) return;
+    maxTouches = Math.max(maxTouches, e.touches.length);
+    // Anker und Uhr setzt nur der ERSTE Finger. Der zweite darf sie nicht
+    // zuruecksetzen, sonst waere eine beliebig langsam aufgelegte Hand noch
+    // ein "kurzer" Tipp.
+    if (e.touches.length !== 1) return;
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+    startedAt = Date.now();
+    moved = false;
+  }, options);
+
+  window.addEventListener('touchmove', function (e) {
+    if (moved || !e.touches || e.touches.length === 0) return;
+    var dx = Math.abs(e.touches[0].clientX - startX);
+    var dy = Math.abs(e.touches[0].clientY - startY);
+    // Damit faellt das Auf- und Zuziehen von selbst heraus: eine Zoom-Geste
+    // bewegt die Finger.
+    if (dx > ${TAP_SLOP_PX} || dy > ${TAP_SLOP_PX}) moved = true;
+  }, options);
+
+  window.addEventListener('touchend', function (e) {
+    // Erst wenn ALLE Finger weg sind — sonst zaehlte das Abheben des ersten
+    // Fingers schon als Ende der Geste.
+    if (e.touches && e.touches.length > 0) return;
+    var ok = !moved && maxTouches === 2 && Date.now() - startedAt <= ${TAP_MAX_MS};
+    maxTouches = 0;
+    moved = true;
+    if (!ok) return;
+    // Hier steht mit Absicht KEINE Pruefung auf Bedienelemente (closest) und
+    // keine auf eine bestehende Textauswahl. Beides war noetig, solange die
+    // Geste ein Einzeltipp war und mit dem Dokument konkurrierte. Mit zwei
+    // Fingern ist es umgekehrt falsch: das Dokument sieht die Geste gar nicht,
+    // und ein Zwei-Finger-Tipp, der zufaellig auf einem Link beginnt, soll
+    // genauso wirken wie einer daneben.
+    if (window.ReactNativeWebView) {
+      window.ReactNativeWebView.postMessage(JSON.stringify({ kind: 'twoFingerTap' }));
+    }
+  }, options);
+})();
+true;`,
+    [initialOffset]
+  );
 
   /**
    * Der Auftrag geht erst nach `onLoadEnd` hinaus — vorher gibt es im
@@ -338,15 +461,20 @@ export function DocumentView({
     return false;
   };
 
-  /** Einzige Nachricht aus dem Dokument: das Ergebnis der Suche. */
+  /**
+   * Zwei Nachrichten aus dem Dokument: das Ergebnis der Suche und der
+   * Zwei-Finger-Tipp auf die Dokumentflaeche.
+   */
   const handleMessage: WebViewProps['onMessage'] = (event) => {
     try {
       const payload: unknown = JSON.parse(event.nativeEvent.data);
-      if (
-        payload !== null &&
-        typeof payload === 'object' &&
-        (payload as { kind?: unknown }).kind === 'find'
-      ) {
+      if (payload === null || typeof payload !== 'object') return;
+      const kind = (payload as { kind?: unknown }).kind;
+      if (kind === 'twoFingerTap') {
+        onTwoFingerTap?.();
+        return;
+      }
+      if (kind === 'find') {
         const { total, index } = payload as { total: unknown; index: unknown };
         if (typeof total === 'number' && typeof index === 'number') {
           onFindResult?.({ total, index });
@@ -402,8 +530,9 @@ export function DocumentView({
           onLoadEnd={reveal}
           onMessage={handleMessage}
           onScroll={handleWebViewScroll}
-          // Leseposition wiederherstellen, bevor das Bild sichtbar wird.
-          injectedJavaScript={`window.scrollTo(0, ${Math.round(initialOffset)}); true;`}
+          // Leseposition wiederherstellen, bevor das Bild sichtbar wird, und
+          // danach die Tipp-Erkennung aufsetzen.
+          injectedJavaScript={startupScript}
           showsVerticalScrollIndicator={false}
           overScrollMode="never"
           allowsBackForwardNavigationGestures={false}
